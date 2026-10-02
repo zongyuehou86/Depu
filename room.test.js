@@ -363,7 +363,8 @@ test('returning resets the consecutive absence count and new hands record real p
 
 test('new arrivals may take and change an empty seat during play without joining the current hand', () => {
   const { room, members } = roomWithPlayers(3);
-  room.command(members[0].token, { type: 'setCapacity', capacity: 5 });
+  const spectator = room.join('调整人数的观众');
+  room.command(spectator.token, { type: 'setCapacity', capacity: 5 });
   room.command(members[0].token, { type: 'nextHand' });
   const before = {
     actor: room.hand.actingSeat, dealer: room.hand.dealerSeat,

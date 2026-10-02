@@ -10,7 +10,7 @@
   const sounds = window.PokerSounds;
   const soundPlanner = window.PokerSoundEvents?.createPlanner();
   const preactions = window.PokerPreactions.createController();
-  const state = { roomCode: '', token: '', data: null, socket: null, retry: null, poll: null, timer: null, soundTurnTimer: null, soundResumeAt: 0, clockOffset: 0, session: 0, mode: 'create', pending: false, resumeCancelled: false, newRunoutCards: new Set(), seatDialogSeat: null };
+  const state = { roomCode: '', token: '', data: null, socket: null, retry: null, poll: null, timer: null, soundTurnTimer: null, soundResumeAt: 0, clockOffset: 0, session: 0, mode: 'create', pending: false, resumeCancelled: false, newRunoutCards: new Set(), seatDialogSeat: null, tableSettingsRoomCode: '', tableSettingsSeenId: 0 };
   const names = { preflop: '翻牌前', flop: '翻牌', turn: '转牌', river: '河牌', showdown: '摊牌', waiting: '等待开局' };
   const suits = { s: '♠', h: '♥', d: '♦', c: '♣' };
   const ranks = { T: '10', J: 'J', Q: 'Q', K: 'K', A: 'A' };
@@ -198,7 +198,8 @@
   }
 
   function openSeatDialog(index) {
-    if (!state.data || Number.isInteger(state.data.hero?.seat) || state.data.seats?.[index] || state.data.pause) return;
+    if (!state.data || Number.isInteger(state.data.hero?.seat) || state.data.seats?.[index] || state.data.pause ||
+        (Number.isInteger(state.data.pendingCapacity) && index >= state.data.pendingCapacity)) return;
     state.seatDialogSeat = index;
     renderSeatPanel(state.data);
     const buyInInput = $('#seat-buyin-input');
@@ -680,6 +681,8 @@
 
   function stopNetwork() {
     state.session += 1;
+    state.tableSettingsRoomCode = '';
+    state.tableSettingsSeenId = 0;
     clearTimeout(state.soundTurnTimer);
     state.soundTurnTimer = null;
     state.soundResumeAt = 0;
@@ -715,6 +718,8 @@
     state.roomCode = code;
     state.token = token;
     state.data = initial || null;
+    state.tableSettingsRoomCode = code;
+    state.tableSettingsSeenId = Number(initial?.tableSettingsNotice?.id) || 0;
     state.soundResumeAt = 0;
     soundPlanner?.baseline(initial, Number(initial?.serverTime) || Date.now());
     state.newRunoutCards = new Set();
@@ -952,6 +957,16 @@
     } });
   }
 
+  function tableSettingsNoticeText(fresh, previous, seenId = 0) {
+    const notice = fresh.tableSettingsNotice;
+    if (!previous || previous.roomCode !== fresh.roomCode || !notice || !Number.isFinite(Number(notice.id)) ||
+        Number(notice.id) <= Math.max(seenId, Number(previous.tableSettingsNotice?.id ?? -1)) ||
+        Number(notice.nextHandNo) <= Number(fresh.handNo)) return '';
+    if (notice.kind === 'bigBlind') return t('下一局大盲筹码数为{amount}筹码', { amount: money(notice.bigBlind) });
+    if (notice.kind === 'capacity') return t('下一局牌桌人数为{count}人', { count: notice.capacity });
+    return '';
+  }
+
   function applyState(fresh, { soundSilent = false } = {}) {
     if (!fresh || typeof fresh !== 'object') return;
     const serverTime = Number(fresh.serverTime);
@@ -995,6 +1010,13 @@
     if (previous && financial && (financial.at !== priorFinancial?.at || financial.type !== priorFinancial?.type)) {
       showToast(financial.message || t(financial.type === 'unloadCanceled' ? '本手结算后余额不足，卸码已取消。' : '筹码结算已更新。'));
     }
+    const noticeId = Number(fresh.tableSettingsNotice?.id);
+    const sameSettingsRoom = state.tableSettingsRoomCode === fresh.roomCode;
+    const settingsText = sameSettingsRoom ? tableSettingsNoticeText(fresh, previous, state.tableSettingsSeenId) : '';
+    state.tableSettingsRoomCode = fresh.roomCode;
+    if (!sameSettingsRoom) state.tableSettingsSeenId = Number.isFinite(noticeId) ? noticeId : 0;
+    else if (Number.isFinite(noticeId)) state.tableSettingsSeenId = Math.max(state.tableSettingsSeenId, noticeId);
+    if (settingsText) showToast(settingsText);
   }
 
   function updateTimers() {
@@ -1135,7 +1157,7 @@
   }
 
   function renderTable(data) {
-    const capacity = Math.min(10, Math.max(4, Number(data.capacity) || 4));
+    const capacity = Math.min(10, Math.max(4, Number(data.seatingCapacity) || Number(data.capacity) || 4));
     const seats = Array.isArray(data.seats) ? data.seats : [];
     const myIndex = Number.isInteger(data.hero?.seat) ? data.hero.seat : null;
     const runout = data.runout;
@@ -1188,7 +1210,7 @@
       const seat = seats[index];
       const slot = tableSeatSlot(index, anchor, capacity, myIndex === null);
       const placement = `--x:${slot.x}%;--y:${slot.y}%;--mx:${slot.mx}%;--my:${slot.my}%`;
-      if (!seat) return myIndex !== null
+      if (!seat) return myIndex !== null || (Number.isInteger(data.pendingCapacity) && index >= data.pendingCapacity)
         ? `<span class="table-empty-seat is-unavailable" data-seat="${index}" style="${placement}" aria-label="${safe(t('{seat} 号空位', { seat: index + 1 }))}">${safe(t('空位'))}</span>`
         : `<button class="table-empty-seat" type="button" data-seat="${index}" style="${placement}" ${data.pause ? 'disabled' : ''} aria-label="${safe(t('选择 {seat} 号空位', { seat: index + 1 }))}">${safe(t('＋ 入座'))}</button>`;
       const classes = ['opponent-seat', data.actingSeat === index ? 'active' : '', seat.folded ? 'folded' : '', seat.sittingOut ? 'sitting-out' : '', seat.waitingNextHand ? 'waiting-next' : ''].filter(Boolean).join(' ');
@@ -1237,9 +1259,10 @@
     $('#seat-buyin-input').min = String(Math.max(2, Number(data.bigBlind) || 20));
     const mySeat = Number.isInteger(data.hero?.seat) ? data.hero.seat : null;
     const seats = Array.isArray(data.seats) ? data.seats : [];
-    const capacity = Math.min(10, Math.max(4, Number(data.capacity) || 4));
+    const capacity = Math.min(10, Math.max(4, Number(data.seatingCapacity) || Number(data.capacity) || 4));
     let chosen = state.seatDialogSeat;
-    if (chosen !== null && (mySeat !== null || !Number.isInteger(chosen) || chosen < 0 || chosen >= capacity || seats[chosen])) {
+    if (chosen !== null && (mySeat !== null || !Number.isInteger(chosen) || chosen < 0 || chosen >= capacity ||
+        (Number.isInteger(data.pendingCapacity) && chosen >= data.pendingCapacity) || seats[chosen])) {
       state.seatDialogSeat = null;
       chosen = null;
     }
@@ -1392,8 +1415,9 @@
     const seated = Number.isInteger(hero.seat);
     const me = seated ? data.seats?.[hero.seat] : null;
     const capacity = Math.min(10, Math.max(4, Number(data.capacity) || 4));
+    const seatingCapacity = Math.min(10, Math.max(capacity, Number(data.seatingCapacity) || capacity));
     const occupied = (data.seats || []).filter(Boolean).length;
-    $('#room-summary').innerHTML = `<span>${safe(t('座位'))}</span><strong>${occupied} / ${capacity}</strong><span>${safe(t('观战人数'))}</span><strong>${money(data.spectatorCount)}</strong><span>${safe(t('盲注'))}</span><strong>${chipAmount(data.smallBlind ?? 10, data)} / ${chipAmount(chips.getBlind(data), data)}</strong>${me ? `<span>${safe(t('你的筹码'))}</span><strong>${chipAmount(me.stack, data)}</strong><span>${safe(t('你的状态'))}</span><strong>${safe(hero.sittingOut ? t('暂离 {count}/5 手', { count: Math.min(5, Math.max(0, Number(hero.awayHands) || 0)) }) : t(hero.pendingSitOut ? '下手暂离' : hero.waitingNextHand ? '下手参与' : '在座'))}</strong>` : ''}`;
+    $('#room-summary').innerHTML = `<span>${safe(t('座位'))}</span><strong>${occupied} / ${seatingCapacity}</strong><span>${safe(t('观战人数'))}</span><strong>${money(data.spectatorCount)}</strong><span>${safe(t('盲注'))}</span><strong>${chipAmount(data.smallBlind ?? 10, data)} / ${chipAmount(chips.getBlind(data), data)}</strong>${me ? `<span>${safe(t('你的筹码'))}</span><strong>${chipAmount(me.stack, data)}</strong><span>${safe(t('你的状态'))}</span><strong>${safe(hero.sittingOut ? t('暂离 {count}/5 手', { count: Math.min(5, Math.max(0, Number(hero.awayHands) || 0)) }) : t(hero.pendingSitOut ? '下手暂离' : hero.waitingNextHand ? '下手参与' : '在座'))}</strong>` : ''}`;
     const pending = Number(hero.pendingRebuy ?? me?.pendingRebuy) || 0;
     const pendingUnload = Number(hero.pendingUnload ?? me?.pendingUnload) || 0;
     const pendingSent = Number(hero.pendingGiftSent ?? me?.pendingGiftSent) || 0;
@@ -1408,16 +1432,22 @@
     } else {
       $('#secondary-presence').innerHTML = '';
     }
-    if (hero.isOwner && canStart(data)) {
-      controls.push(`<label class="field" for="capacity-change"><span>${safe(t('调整牌桌人数'))}</span><span class="inline-control"><select id="capacity-change" aria-label="${safe(t('调整牌桌人数'))}" ${data.pause ? 'disabled' : ''}>${Array.from({ length: 7 }, (_, i) => i + 4).map((count) => `<option value="${count}" ${count === capacity ? 'selected' : ''}>${safe(t('{count} 人', { count }))}</option>`).join('')}</select><button class="button secondary compact" type="button" data-command="setCapacity" ${data.pause ? 'disabled' : ''}>${safe(t('确定'))}</button></span></label>`);
+    if (!seated) {
+      const nextCapacity = Number.isInteger(data.pendingCapacity) ? data.pendingCapacity : capacity;
+      const existingCapacity = $('#capacity-change');
+      const capacityDraft = existingCapacity?.dataset.roomCode === String(data.roomCode) &&
+        existingCapacity?.dataset.serverCapacity === String(nextCapacity) ? Number(existingCapacity.value) : nextCapacity;
+      controls.push(`<label class="field" for="capacity-change"><span>${safe(t('调整牌桌人数'))}</span><span class="inline-control"><select id="capacity-change" data-room-code="${safe(data.roomCode)}" data-server-capacity="${nextCapacity}" aria-label="${safe(t('调整牌桌人数'))}" ${data.pause ? 'disabled' : ''}>${Array.from({ length: 7 }, (_, i) => i + 4).map((count) => `<option value="${count}" ${count === capacityDraft ? 'selected' : ''}>${safe(t('{count} 人', { count }))}</option>`).join('')}</select><button class="button secondary compact" type="button" data-command="setCapacity" ${data.pause ? 'disabled' : ''}>${safe(t('确定'))}</button></span></label>`);
+      const blind = Math.max(2, Number(data.pendingBigBlind ?? data.bigBlind) || 20);
+      const existingBlind = $('#big-blind-change');
+      const blindDraft = existingBlind?.dataset.roomCode === String(data.roomCode) && existingBlind?.dataset.serverBlind === String(blind)
+        ? existingBlind.value : String(blind);
+      controls.push(`<label class="field blind-setting" for="big-blind-change"><span>${safe(t('调整大盲（筹码）'))}</span><span class="inline-control"><input id="big-blind-change" type="number" inputmode="numeric" min="2" max="1000000" step="1" value="${safe(blindDraft)}" data-room-code="${safe(data.roomCode)}" data-server-blind="${blind}" aria-label="${safe(t('调整大盲（筹码）'))}" ${data.pause ? 'disabled' : ''}><button class="button secondary compact" type="button" data-command="setBigBlind" ${data.pause ? 'disabled' : ''}>${safe(t('确定'))}</button></span></label>`);
     }
-    if (data.status === 'waiting' || data.status === 'finished') {
-      const blind = Math.max(2, Number(data.bigBlind) || 20);
-      const existing = $('#big-blind-change');
-      const draft = existing?.dataset.roomCode === String(data.roomCode) && existing?.dataset.serverBlind === String(blind)
-        ? existing.value : String(blind);
-      controls.push(`<label class="field blind-setting" for="big-blind-change"><span>${safe(t('调整大盲（筹码）'))}</span><span class="inline-control"><input id="big-blind-change" type="number" inputmode="numeric" min="2" max="1000000" step="1" value="${safe(draft)}" data-room-code="${safe(data.roomCode)}" data-server-blind="${blind}" aria-label="${safe(t('调整大盲（筹码）'))}" ${data.pause ? 'disabled' : ''}><button class="button secondary compact" type="button" data-command="setBigBlind" ${data.pause ? 'disabled' : ''}>${safe(t('确定'))}</button></span></label>`);
-    }
+    const nextSettings = [];
+    if (Number.isInteger(data.pendingCapacity)) nextSettings.push(t('人数 {count}', { count: data.pendingCapacity }));
+    if (Number.isInteger(data.pendingBigBlind)) nextSettings.push(t('大盲 {amount}', { amount: money(data.pendingBigBlind) }));
+    if (nextSettings.length) controls.push(`<p class="small-note pending-table-settings">${safe(t('下手设置：{items}', { items: nextSettings.join(' · ') }))}</p>`);
     const financial = hero.lastFinancialNotice;
     const financialText = financial?.message || (financial?.type === 'unloadCanceled' ? '本手结算后筹码不足，排队卸码已取消。' : '');
     if (financialText) controls.push(`<p class="small-note financial-note">${safe(message(financialText))}</p>`);

@@ -172,6 +172,9 @@ export class Room {
     this.capacity = capacityValue(capacity);
     this.bigBlind = BIG_BLIND;
     this.smallBlind = SMALL_BLIND;
+    this.pendingBigBlind = null;
+    this.pendingCapacity = null;
+    this.tableSettingsNotice = null;
     this.ownerToken = null;
     this.members = new Map();
     this.seats = Array(this.capacity).fill(null);
@@ -206,6 +209,9 @@ export class Room {
     const room = new Room(data.code, data.capacity, onChange);
     room.bigBlind = bigBlindValue(data.bigBlind ?? BIG_BLIND);
     room.smallBlind = Math.max(1, Math.floor(room.bigBlind / 2));
+    room.pendingBigBlind = data.pendingBigBlind == null ? null : bigBlindValue(data.pendingBigBlind);
+    room.pendingCapacity = data.pendingCapacity == null ? null : capacityValue(data.pendingCapacity);
+    room.tableSettingsNotice = data.tableSettingsNotice ?? null;
     const expiry = Room.expiryInfoFromJSON(data);
     room.createdAt = expiry.createdAt;
     room.lastHandStartedAt = expiry.lastHandStartedAt;
@@ -231,6 +237,8 @@ export class Room {
       connections: new Set()
     }]));
     room.seats = data.seats;
+    room.seats.length = Math.max(room.capacity, room.pendingCapacity ?? room.capacity);
+    for (let seat = 0; seat < room.seats.length; seat++) room.seats[seat] ??= null;
     room.status = data.status;
     room.handNo = data.handNo;
     room.hand = data.hand;
@@ -302,7 +310,9 @@ export class Room {
   toJSON() {
     return {
       code: this.code, capacity: this.capacity, bigBlind: this.bigBlind,
-      smallBlind: this.smallBlind, ownerToken: this.ownerToken,
+      smallBlind: this.smallBlind, pendingBigBlind: this.pendingBigBlind,
+      pendingCapacity: this.pendingCapacity, tableSettingsNotice: this.tableSettingsNotice,
+      ownerToken: this.ownerToken,
       members: [...this.members.values()].map(({ connections, ...member }) => member),
       seats: this.seats, status: this.status, handNo: this.handNo, hand: this.hand,
       nextHandAt: this.nextHandAt,
@@ -450,7 +460,10 @@ export class Room {
 
   sit(member, seat, buyIn = DEFAULT_BUY_IN) {
     if (member.seat !== null) throw new GameError('你已经入座');
-    if (!Number.isInteger(seat) || seat < 0 || seat >= this.capacity) throw new GameError('无效座位');
+    if (!Number.isInteger(seat) || seat < 0 || seat >= this.seats.length) throw new GameError('无效座位');
+    if (this.pendingCapacity !== null && seat >= this.pendingCapacity) {
+      throw new GameError('该座位将在下一手移除，不能入座');
+    }
     if (this.seats[seat]) throw new GameError('该座位已有人');
     chips(buyIn, '带入筹码', this.bigBlind);
     member.seat = seat;
@@ -939,26 +952,51 @@ export class Room {
   }
 
   setCapacity(member, capacity) {
-    if (member.token !== this.ownerToken) throw new GameError('只有房主可以调整人数', 403);
-    if (this.status === 'playing') throw new GameError('当前手结束后才能调整人数');
+    if (member.seat !== null) throw new GameError('只有观战者可以调整人数', 403);
     capacity = capacityValue(capacity);
     if (this.seats.slice(capacity).some(Boolean)) throw new GameError('缩小人数前请先清空末尾座位');
-    this.capacity = capacity;
-    this.seats.length = capacity;
-    for (let i = 0; i < capacity; i++) if (this.seats[i] === undefined) this.seats[i] = null;
-    if (this.hand && this.hand.dealerSeat >= capacity) this.hand.dealerSeat = capacity - 1;
-    this.addEvent(`房间容量调整为 ${capacity} 人`);
+    if (capacity === (this.pendingCapacity ?? this.capacity)) return;
+    this.pendingCapacity = capacity === this.capacity ? null : capacity;
+    // Expansion opens reservable seats immediately so a full table of players
+    // sitting out cannot prevent newcomers from forming the next hand.
+    this.seats.length = Math.max(this.capacity, this.pendingCapacity ?? this.capacity);
+    for (let seat = 0; seat < this.seats.length; seat++) this.seats[seat] ??= null;
+    const message = `下一局牌桌人数为${capacity}人`;
+    const event = this.addEvent(`${member.nickname} 设置${message}`);
+    this.tableSettingsNotice = { id: event.id, kind: 'capacity',
+      bigBlind: this.pendingBigBlind ?? this.bigBlind, capacity,
+      handNo: this.handNo, nextHandNo: this.handNo + 1, message, at: event.at };
   }
 
   setBigBlind(member, amount) {
-    if (this.status !== 'waiting' && this.status !== 'finished') {
-      throw new GameError('当前手结束后才能调整大盲');
-    }
+    if (member.seat !== null) throw new GameError('只有观战者可以调整大盲', 403);
     const bigBlind = bigBlindValue(amount);
-    if (bigBlind === this.bigBlind) return;
+    if (bigBlind === (this.pendingBigBlind ?? this.bigBlind)) return;
+    this.pendingBigBlind = bigBlind === this.bigBlind ? null : bigBlind;
+    const message = `下一局大盲筹码数为${bigBlind}筹码`;
+    const event = this.addEvent(`${member.nickname} 设置${message}`);
+    this.tableSettingsNotice = { id: event.id, kind: 'bigBlind',
+      bigBlind, capacity: this.pendingCapacity ?? this.capacity,
+      handNo: this.handNo, nextHandNo: this.handNo + 1, message, at: event.at };
+  }
+
+  applyPendingTableSettings() {
+    const capacity = this.pendingCapacity ?? this.capacity;
+    if (this.seats.slice(capacity).some(Boolean)) {
+      throw new GameError('缩小人数前请先清空末尾座位');
+    }
+    const bigBlind = this.pendingBigBlind ?? this.bigBlind;
+    // Validate both before mutating either: the next hand starts with one
+    // consistent table configuration or keeps the entire pending request.
+    capacityValue(capacity);
+    bigBlindValue(bigBlind);
+    this.capacity = capacity;
+    this.seats.length = capacity;
+    for (let seat = 0; seat < capacity; seat++) this.seats[seat] ??= null;
     this.bigBlind = bigBlind;
     this.smallBlind = Math.max(1, Math.floor(bigBlind / 2));
-    this.addEvent(`${member.nickname} 将盲注调整为小盲 ${this.smallBlind} / 大盲 ${this.bigBlind}；下一手生效`);
+    this.pendingCapacity = null;
+    this.pendingBigBlind = null;
   }
 
   draw() {
@@ -1167,13 +1205,17 @@ export class Room {
       if (this.nextHandAt === null) this.reconcileAutoStart();
       if (Date.now() < this.nextHandAt) throw new GameError('请等待本手展示结束，下一手将在倒计时后自动开始');
     }
+    this.applyPendingTableSettings();
     for (const seatedToken of this.seats) {
       const player = this.members.get(seatedToken);
       if (player) player.giftLocked = 0;
     }
     const participants = this.seats.map(token => this.members.get(token)).filter(player => player && !player.sittingOut && !player.pendingSitOut && player.stack > 0);
     this.handNo++;
-    const previousDealer = this.hand?.dealerSeat ?? this.capacity - 1;
+    // The old button can be in a removed empty tail seat. In the retained
+    // clockwise ring, the next seat after any removed tail seat is seat zero.
+    const priorSeat = this.hand?.dealerSeat ?? this.capacity - 1;
+    const previousDealer = priorSeat >= this.capacity ? this.capacity - 1 : priorSeat;
     const dealerSeat = this.nextSeat(previousDealer, player => player?.stack > 0 && !player.sittingOut);
     const smallBlindSeat = participants.length === 2 ? dealerSeat : this.nextSeat(dealerSeat, player => player?.stack > 0 && !player.sittingOut);
     const bigBlindSeat = this.nextSeat(smallBlindSeat, player => player?.stack > 0 && !player.sittingOut);
@@ -1670,7 +1712,10 @@ export class Room {
       Number.isInteger(hand?.actingSeat) && viewer.seat === hand.actingSeat &&
       viewer.hand?.handNo === this.handNo;
     return {
-      roomCode: this.code, capacity: this.capacity, status: this.status, handNo: this.handNo,
+      roomCode: this.code, capacity: this.capacity, seatingCapacity: this.seats.length,
+      pendingCapacity: this.pendingCapacity,
+      pendingBigBlind: this.pendingBigBlind, tableSettingsNotice: this.tableSettingsNotice,
+      status: this.status, handNo: this.handNo,
       serverTime: Date.now(), nextHandAt: this.nextHandAt,
       pause: this.isPaused() ? this.pause : null,
       smallBlind: this.smallBlind, bigBlind: this.bigBlind,
@@ -1718,7 +1763,8 @@ export class Room {
         canRespondRunout: runout?.phase === 'leaderVote' && viewer.seat === runout.leadingSeat,
         minRaiseTo: canAct ? this.minRaiseTo() : null,
         maxRaiseTo: canAct ? this.maxRaiseTo(viewer) : null,
-        canRaise: canAct && this.canRaise(viewer), isOwner: viewer.token === this.ownerToken
+        canRaise: canAct && this.canRaise(viewer), isOwner: viewer.token === this.ownerToken,
+        canEditTableSettings: viewer.seat === null
       },
       spectatorCount: [...this.members.values()].filter(member => member.seat === null && member.connections.size > 0).length,
       events: this.events.slice(-250), history: this.history.slice(-20),

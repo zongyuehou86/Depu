@@ -37,8 +37,8 @@ async function stopServer(child) {
   await once(child, 'exit');
 }
 
-test('spectator blind change applies next hand and survives HTTP restart without changing the previous record',
-  { timeout: 12000 }, async t => {
+test('spectator reservations apply next hand across HTTP restart without changing the previous record',
+  { timeout: 15000 }, async t => {
     const port = await freePort();
     const dataDir = mkdtempSync(path.join(os.tmpdir(), 'poker-blinds-data-'));
     const recordsDir = mkdtempSync(path.join(os.tmpdir(), 'poker-blinds-records-'));
@@ -67,46 +67,81 @@ test('spectator blind change applies next hand and survives HTTP restart without
     assert.equal(created.status, 201);
     const code = created.data.roomCode;
     const tokens = [];
-    for (const nickname of ['玩家甲', '玩家乙', '观众']) {
+    for (const nickname of ['玩家甲', '玩家乙', '观众', '候补']) {
       const joined = await request('POST', `/api/rooms/${code}/join`, { nickname });
       assert.equal(joined.status, 200);
       tokens.push(joined.data.token);
     }
-    const [first, second, spectator] = tokens;
+    const [first, second, spectator, newcomer] = tokens;
     const command = (token, body) => request('POST', `/api/rooms/${code}/command`, body, token);
     const configured = await command(spectator, { type: 'setBigBlind', amount: 51 });
     assert.equal(configured.status, 200);
-    assert.equal(configured.data.state.bigBlind, 51);
-    assert.equal(configured.data.state.smallBlind, 25);
+    assert.equal(configured.data.state.bigBlind, 20);
+    assert.equal(configured.data.state.pendingBigBlind, 51);
+    assert.equal(configured.data.state.tableSettingsNotice.message, '下一局大盲筹码数为51筹码');
+    const expansion = await command(spectator, { type: 'setCapacity', capacity: 6 });
+    assert.equal(expansion.status, 200);
+    assert.equal(expansion.data.state.capacity, 4);
+    assert.equal(expansion.data.state.pendingCapacity, 6);
+    assert.equal(expansion.data.state.seatingCapacity, 6);
     assert.equal((await command(first, { type: 'sit', seat: 0, buyIn: 2000 })).status, 200);
     assert.equal((await command(second, { type: 'sit', seat: 1, buyIn: 2000 })).status, 200);
     const started = await command(first, { type: 'nextHand' });
     assert.equal(started.status, 200);
+    assert.equal(started.data.state.capacity, 6);
+    assert.equal(started.data.state.bigBlind, 51);
     assert.equal(started.data.state.handBigBlind, 51);
     assert.equal(started.data.state.handSmallBlind, 25);
     assert.equal(started.data.state.pot, 76);
     assert.equal(started.data.state.minRaiseTo, 102);
+    const seatedAttempt = await command(first, { type: 'setBigBlind', amount: 37 });
+    assert.equal(seatedAttempt.status, 403);
     const during = await command(spectator, { type: 'setBigBlind', amount: 37 });
-    assert.equal(during.status, 400);
-    assert.match(during.data.error, /当前手结束后才能调整大盲/);
+    assert.equal(during.status, 200);
+    assert.equal(during.data.state.bigBlind, 51);
+    assert.equal(during.data.state.pendingBigBlind, 37);
+    assert.equal((await command(newcomer, { type: 'sit', seat: 5, buyIn: 2000 })).status, 200);
+    const blockedShrink = await command(spectator, { type: 'setCapacity', capacity: 4 });
+    assert.equal(blockedShrink.status, 400);
+    assert.match(blockedShrink.data.error, /缩小人数前请先清空末尾座位/);
+    assert.equal((await command(newcomer, { type: 'stand' })).status, 200);
+    const shrink = await command(spectator, { type: 'setCapacity', capacity: 4 });
+    assert.equal(shrink.status, 200);
+    assert.equal(shrink.data.state.capacity, 6);
+    assert.equal(shrink.data.state.pendingCapacity, 4);
+    const noticeId = shrink.data.state.tableSettingsNotice.id;
     const folded = await command(first, { type: 'action', action: 'fold' });
     assert.equal(folded.status, 200);
     assert.equal(folded.data.state.status, 'finished');
-    const after = await command(spectator, { type: 'setBigBlind', amount: 37 });
-    assert.equal(after.status, 200);
-    assert.equal(after.data.state.bigBlind, 37);
-    assert.equal(after.data.state.handBigBlind, 51);
     const textBefore = readFileSync(path.join(recordsDir, code, '1.txt'), 'utf8');
     assert.match(textBefore, /本手盲注：小盲 25；大盲 51/);
     await stopServer(child);
     await start();
     const state = await request('GET', `/api/rooms/${code}/state`, undefined, spectator);
     assert.equal(state.status, 200);
-    assert.equal(state.data.state.bigBlind, 37);
-    assert.equal(state.data.state.smallBlind, 18);
+    assert.equal(state.data.state.bigBlind, 51);
+    assert.equal(state.data.state.pendingBigBlind, 37);
+    assert.equal(state.data.state.capacity, 6);
+    assert.equal(state.data.state.pendingCapacity, 4);
+    assert.equal(state.data.state.tableSettingsNotice.id, noticeId);
     const history = await request('GET', `/api/rooms/${code}/history`, undefined, spectator);
     assert.equal(history.status, 200);
     assert.equal(history.data.items[0].smallBlind, 25);
     assert.equal(history.data.items[0].bigBlind, 51);
+    assert.equal(readFileSync(path.join(recordsDir, code, '1.txt'), 'utf8'), textBefore);
+    const deadline = Date.now() + 7500;
+    let next;
+    while (Date.now() < deadline) {
+      const result = await request('GET', `/api/rooms/${code}/state`, undefined, spectator);
+      if (result.data.state.handNo >= 2) { next = result.data.state; break; }
+      await new Promise(resolve => setTimeout(resolve, 60));
+    }
+    assert.ok(next, 'automatic next hand should start after restart');
+    assert.equal(next.capacity, 4);
+    assert.equal(next.pendingCapacity, null);
+    assert.equal(next.bigBlind, 37);
+    assert.equal(next.smallBlind, 18);
+    assert.equal(next.handBigBlind, 37);
+    assert.equal(next.handSmallBlind, 18);
     assert.equal(readFileSync(path.join(recordsDir, code, '1.txt'), 'utf8'), textBefore);
   });

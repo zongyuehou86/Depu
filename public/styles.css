@@ -411,3 +411,20 @@ html,body{overflow-x:clip;overscroll-behavior-x:none;touch-action:pan-y}
   .action-panel .action-controls>.raise-sizes .action-timebank,
   html[lang="en"] .action-panel .raise-sizes .action-timebank{font-size:13px}
 }
+
+/* Give Fold and Check the width released by the smaller Check/Fold control. */
+@media (max-width:640px){
+  .action-panel:not(.is-special) .action-controls{grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,.6667fr)}
+  .action-panel .action-controls>.action-fold,.action-panel .action-controls>.action-check,
+  .action-panel .action-controls>.action-call,.action-panel .action-controls>.action-checkfold{min-height:40px}
+}
+@media (min-width:641px) and (max-width:850px){
+  .action-panel:not(.is-special) .action-controls{grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,.6667fr) minmax(0,1fr) minmax(0,1fr)}
+  .action-panel .action-controls>.action-checkfold{min-height:44px}
+}
+@media (min-width:851px){
+  .action-panel:not(.is-special) .action-controls{grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,.6667fr) minmax(0,1fr) minmax(0,1fr)}
+  .action-panel .action-controls>.action-checkfold{min-height:41px}
+}
+.action-panel .action-controls>.action-checkfold{width:100%;min-width:0;justify-self:stretch}
+@media (max-width:360px){html[lang="en"] .action-panel .action-controls>.action-checkfold{font-size:9.5px;letter-spacing:-.04em;padding-inline:1px}}

@@ -275,6 +275,11 @@
     ,['观战人数', '觀戰人數', 'Spectators']
     ,['调整牌桌人数', '調整牌桌人數', 'Change table size']
     ,['调整大盲（筹码）', '調整大盲（籌碼）', 'Big blind (chips)']
+    ,['人数 {count}', '人數 {count}', '{count} seats']
+    ,['大盲 {amount}', '大盲 {amount}', 'Big blind {amount}']
+    ,['下手设置：{items}', '下手設定：{items}', 'Next hand: {items}']
+    ,['下一局大盲筹码数为{amount}筹码', '下一局大盲籌碼數為{amount}籌碼', 'Next hand’s big blind: {amount} chips']
+    ,['下一局牌桌人数为{count}人', '下一局牌桌人數為{count}人', 'Next hand’s table size: {count} players']
     ,['大盲须为 2 至 1,000,000 的整数。', '大盲須為 2 至 1,000,000 的整數。', 'Big blind must be an integer from 2 to 1,000,000.']
     ,['带入筹码须为 {min} 至 1,000,000 的整数。', '帶入籌碼須為 {min} 至 1,000,000 的整數。', 'Buy-in must be an integer from {min} to 1,000,000.']
     ,['送花 {sent} · 收花 {received}', '送花 {sent} · 收花 {received}', 'Gifts sent {sent} · received {received}']
@@ -447,6 +452,8 @@
       [/^加注总额须至少 (?<min>\d+)，或全下至 (?<max>\d+)$/, '加注总额须至少 {min}，或全下至 {max}'],
       [/^花束数量须为 (?<min>\d+) 至 (?<max>\d+) 的整数$/, '花束数量须为 {min} 至 {max} 的整数'],
       [/^(?<label>带入筹码|补码金额)须为 (?<min>\d+) 至 (?<max>\d+) 的整数$/, '{label}须为 {min} 至 {max} 的整数'],
+      [/^(?<name>.+) 设置下一局大盲筹码数为(?<amount>\d+)筹码$/, '{name} 设置下一局大盲筹码数为{amount}筹码'],
+      [/^(?<name>.+) 设置下一局牌桌人数为(?<count>\d+)人$/, '{name} 设置下一局牌桌人数为{count}人'],
       [/^房间容量调整为 (?<count>\d+) 人$/, '房间容量调整为 {count} 人'],
       [/^(?<name>.+) 将盲注调整为小盲 (?<small>\d+) \/ 大盲 (?<big>\d+)；下一手生效$/, '{name} 将盲注调整为小盲 {small} / 大盲 {big}；下一手生效'],
       [/^(?<name>.+) 赢得底池 (?<amount>\d+)（其他玩家弃牌）$/, '{name} 赢得底池 {amount}（其他玩家弃牌）'],
@@ -472,6 +479,11 @@
 
   // Error and system strings are kept separate from static copy for auditing.
   const messages = [
+    ['只有观战者可以调整人数', '只有觀戰者可以調整人數', 'Only spectators can change the table size.'],
+    ['只有观战者可以调整大盲', '只有觀戰者可以調整大盲', 'Only spectators can change the big blind.'],
+    ['该座位将在下一手移除，不能入座', '該座位將於下一手移除，不能入座', 'This seat will be removed next hand and cannot be reserved.'],
+    ['{name} 设置下一局大盲筹码数为{amount}筹码', '{name} 設定下一局大盲籌碼數為{amount}籌碼', '{name} set the next hand’s big blind to {amount} chips'],
+    ['{name} 设置下一局牌桌人数为{count}人', '{name} 設定下一局牌桌人數為{count}人', '{name} set the next hand’s table size to {count} players'],
     ['当前手结束后才能调整大盲', '目前手牌結束後才能調整大盲', 'Wait until this hand ends to change the big blind.'],
     ['大盲须为 2 至 1000000 的整数', '大盲須為 2 至 1000000 的整數', 'Big blind must be an integer from 2 to 1,000,000.'],
     ['{name} 将盲注调整为小盲 {small} / 大盲 {big}；下一手生效', '{name} 將盲注調整為小盲 {small} / 大盲 {big}；下一手生效', '{name} set the blinds to {small} / {big}, effective next hand'],

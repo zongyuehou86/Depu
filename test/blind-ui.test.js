@@ -33,23 +33,30 @@ function sidebarHarness() {
   return { nodes, renderSidebar, data };
 }
 
-test('all room members can change the blind between hands, with a stable unsubmitted draft', () => {
+test('only spectators can edit next-hand settings, including during play, with stable drafts', () => {
   const { nodes, renderSidebar, data } = sidebarHarness();
   renderSidebar(data);
   assert.match(nodes['#room-controls'].innerHTML, /id="big-blind-change"[^>]*value="40"/);
   assert.match(nodes['#room-controls'].innerHTML, /data-command="setBigBlind"/);
-  assert.doesNotMatch(nodes['#room-controls'].innerHTML, /data-command="setCapacity"/, 'spectators still have blind permission');
+  assert.match(nodes['#room-controls'].innerHTML, /data-command="setCapacity"/, 'spectators can also change capacity');
 
   nodes['#big-blind-change'] = { dataset: { roomCode: 'TABLE', serverBlind: '40' }, value: '125' };
   renderSidebar(data);
   assert.match(nodes['#room-controls'].innerHTML, /id="big-blind-change"[^>]*value="125"/);
-  renderSidebar({ ...data, bigBlind: 50, smallBlind: 25 });
+  renderSidebar({ ...data, pendingBigBlind: 50 });
   assert.match(nodes['#room-controls'].innerHTML, /id="big-blind-change"[^>]*value="50"/);
 
-  renderSidebar({ ...data, status: 'playing' });
-  assert.doesNotMatch(nodes['#room-controls'].innerHTML, /setBigBlind/);
-  renderSidebar({ ...data, status: 'finished' });
+  renderSidebar({ ...data, status: 'playing', seatingCapacity: 6, pendingCapacity: 6,
+    seats: [null, null, null, null, null, null] });
   assert.match(nodes['#room-controls'].innerHTML, /setBigBlind/);
+  assert.match(nodes['#room-controls'].innerHTML, /<option value="6" selected>/);
+  assert.match(nodes['#room-summary'].innerHTML, /0 \/ 6/);
+  assert.match(nodes['#room-controls'].innerHTML, /下手设置：人数 6/);
+
+  renderSidebar({ ...data, hero: { seat: 0, isOwner: true },
+    seats: [{ seat: 0, stack: 2000 }, null, null, null] });
+  assert.doesNotMatch(nodes['#room-controls'].innerHTML, /setBigBlind|setCapacity/,
+    'being the owner does not permit changes while seated');
 });
 
 test('blind button sends a validated integer amount through the production room command handler', () => {
@@ -76,8 +83,9 @@ test('blind button sends a validated integer amount through the production room 
 });
 
 test('seat buy-in minimum follows the current room blind', () => {
-  const data = { roomCode: 'TABLE', capacity: 4, bigBlind: 5000, status: 'waiting',
-    hero: { seat: null }, seats: [null, null, null, null] };
+  const data = { roomCode: 'TABLE', capacity: 4, seatingCapacity: 6, pendingCapacity: 6,
+    bigBlind: 5000, pendingBigBlind: 8000, status: 'playing',
+    hero: { seat: null }, seats: [null, null, null, null, null, null] };
   const nodes = {
     '#seat-buyin-input': { min: '20', value: '2000', focus() {} },
     '#seat-panel': { hidden: true }, '#seat-backdrop': { hidden: true },
@@ -88,8 +96,30 @@ test('seat buy-in minimum follows the current room blind', () => {
   const state = { data, seatDialogSeat: null };
   const renderSeatPanel = productionFunction('renderSeatPanel', { $, state, t, safe });
   const openSeatDialog = productionFunction('openSeatDialog', { $, state, renderSeatPanel });
-  openSeatDialog(0);
+  openSeatDialog(5);
   assert.equal(nodes['#seat-buyin-input'].min, '5000');
   assert.equal(nodes['#seat-buyin-input'].value, '5000');
   assert.equal(nodes['#seat-panel'].hidden, false);
+  assert.equal(state.seatDialogSeat, 5, 'an added seat can be reserved during the current hand');
+  renderSeatPanel({ ...data, pendingCapacity: 4 });
+  assert.equal(nodes['#seat-panel'].hidden, true, 'shrinking the next hand invalidates a tail-seat draft');
+});
+
+test('a new setting notice appears once while pending, never on baseline or after its hand starts', () => {
+  const noticeText = productionFunction('tableSettingsNoticeText', {
+    t, money: value => String(value)
+  });
+  const old = { roomCode: 'TABLE', handNo: 4, tableSettingsNotice: { id: 10 } };
+  const bigBlind = { roomCode: 'TABLE', handNo: 4, tableSettingsNotice: {
+    id: 11, kind: 'bigBlind', bigBlind: 51, nextHandNo: 5
+  } };
+  assert.equal(noticeText(bigBlind, null), '');
+  assert.equal(noticeText(bigBlind, old), '下一局大盲筹码数为51筹码');
+  assert.equal(noticeText(bigBlind, old, 11), '', 'a newer setting already seen cannot replay');
+  assert.equal(noticeText(bigBlind, bigBlind), '');
+  assert.equal(noticeText({ ...bigBlind, handNo: 5 }, old), '');
+  assert.equal(noticeText(bigBlind, { ...old, roomCode: 'OTHER' }), '');
+  assert.equal(noticeText({ ...bigBlind, tableSettingsNotice: {
+    id: 12, kind: 'capacity', capacity: 8, nextHandNo: 5
+  } }, old), '下一局牌桌人数为8人');
 });

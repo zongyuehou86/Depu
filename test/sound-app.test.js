@@ -21,6 +21,11 @@ function productionFunction(name, dependencies) {
   return Function(...Object.keys(dependencies), `${source}\nreturn ${name}`)(...Object.values(dependencies));
 }
 
+const tableSettingsNoticeText = productionFunction('tableSettingsNoticeText', {
+  t: (key, params = {}) => key.replace(/\{(\w+)\}/g, (_, name) => params[name] ?? ''),
+  money: value => String(value)
+});
+
 test('sound settings controls and translations exist before app startup', () => {
   assert.match(html, /<script src="\/i18n\.js" defer><\/script>[\s\S]*<script src="\/sounds\.js" defer><\/script>[\s\S]*<script src="\/sound-events\.js" defer><\/script>[\s\S]*<script src="\/app\.js" defer><\/script>/);
   for (const id of ['sound-open', 'sound-panel', 'sound-close', 'sound-enabled',
@@ -57,14 +62,15 @@ test('filling all-in sends no command or sound; confirmed raise sounds from the 
     hero: { seat: 0, canAct: true, maxRaiseTo: 500 }, board: [], events: [],
     seats: [{ nickname: '甲' }, { nickname: '乙' }], serverTime: now };
   const state = { roomCode: '8301', token: 'test', session: 1, data: initial,
-    clockOffset: 0, soundResumeAt: 0, soundTurnTimer: null, newRunoutCards: new Set() };
+    clockOffset: 0, soundResumeAt: 0, soundTurnTimer: null, newRunoutCards: new Set(),
+    tableSettingsRoomCode: '8301', tableSettingsSeenId: 0 };
   soundPlanner.baseline(initial, now);
   const playSoundCues = productionFunction('playSoundCues', {
     sounds, state, document: { hidden: false }, clearTimeout: clearTimeoutFake, setTimeout: setTimeoutFake
   });
   const applyState = productionFunction('applyState', {
     state, soundPlanner, render() {}, playSoundCues, showToast() {}, t: value => value,
-    Date, preactions: { observe() {} }, runPreaction() {}
+    Date, preactions: { observe() {} }, runPreaction() {}, tableSettingsNoticeText
   });
   const chips = window.PokerChips;
   const input = { value: '', dataset: { chipUnit: 'chips' } };
@@ -110,13 +116,15 @@ test('a pending HTTP refresh uses the disconnect timestamp when its response arr
     actingSeat: 1, serverTime: now, hero: { seat: 0, canAct: false }, board: [],
     events: [], seats: [{ nickname: '甲' }, { nickname: '乙' }] };
   const state = { roomCode: '8301', token: 'test', session: 1, data: initial,
-    soundResumeAt: 0, clockOffset: 0, newRunoutCards: new Set(), soundTurnTimer: null, socket: null };
+    soundResumeAt: 0, clockOffset: 0, newRunoutCards: new Set(), soundTurnTimer: null, socket: null,
+    tableSettingsRoomCode: '8301', tableSettingsSeenId: 0 };
   const soundPlanner = window.PokerSoundEvents.createPlanner();
   soundPlanner.baseline(initial, now);
   const heard = [];
   const applyState = productionFunction('applyState', {
     state, soundPlanner, render() {}, playSoundCues: cues => heard.push(...cues.map(cue => cue.kind)),
-    showToast() {}, t: value => value, Date, preactions: { observe() {} }, runPreaction() {}
+    showToast() {}, t: value => value, Date, preactions: { observe() {} }, runPreaction() {},
+    tableSettingsNoticeText
   });
   let deliver;
   const request = () => new Promise(resolve => { deliver = resolve; });
@@ -149,7 +157,8 @@ test('late HTTP and direct stale snapshots cannot cancel a newer WS turn sound',
       actingSeat: 1, serverTime: now, hero: { seat: 0, canAct: false }, board: ['As', 'Ks', 'Qs'],
       events: [], seats: [{ nickname: '甲' }, { nickname: '乙' }] };
     const state = { roomCode: '8301', token: 'test', session: 1, data: initial,
-      soundResumeAt: 0, clockOffset: 0, newRunoutCards: new Set(), soundTurnTimer: null, socket: null };
+      soundResumeAt: 0, clockOffset: 0, newRunoutCards: new Set(), soundTurnTimer: null, socket: null,
+      tableSettingsRoomCode: '8301', tableSettingsSeenId: 0 };
     const soundPlanner = window.PokerSoundEvents.createPlanner();
     soundPlanner.baseline(initial, now);
     const heard = [];
@@ -160,7 +169,7 @@ test('late HTTP and direct stale snapshots cannot cancel a newer WS turn sound',
     });
     const applyState = productionFunction('applyState', {
       state, soundPlanner, render() { renders++; }, playSoundCues, showToast() {}, t: value => value,
-      Date, clearTimeout, preactions: { observe() {} }, runPreaction() {}
+      Date, clearTimeout, preactions: { observe() {} }, runPreaction() {}, tableSettingsNoticeText
     });
     let deliver;
     const request = () => new Promise(resolve => { deliver = resolve; });

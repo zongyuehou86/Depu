@@ -113,6 +113,15 @@ test('check/fold can be queued offturn but is disabled on the current turn', () 
   assert.match(css, /@media \(min-width:641px\) and \(max-width:850px\)\{[\s\S]*?\.action-panel \.action-controls>\.raise-sizes\{[^}]*width:100%[^}]*grid-template-columns:minmax\(0,\.5fr\) repeat\(3,minmax\(0,1fr\)\)/);
 });
 
+test('decision-row grid gives Fold and Check equal wider tracks without shrinking Check/Fold height', () => {
+  const three = 'minmax(0,1fr) minmax(0,1fr) minmax(0,.6667fr)';
+  assert.ok(css.includes(`.action-panel:not(.is-special) .action-controls{grid-template-columns:${three}}`));
+  assert.ok(css.includes(`.action-panel:not(.is-special) .action-controls{grid-template-columns:${three} minmax(0,1fr) minmax(0,1fr)}`));
+  assert.match(css, /\.action-panel \.action-controls>\.action-checkfold\{width:100%;min-width:0;justify-self:stretch\}/);
+  assert.match(css, /\.action-controls>\.action-fold,\.action-panel \.action-controls>\.action-check,[\s\S]*?\.action-controls>\.action-checkfold\{min-height:40px\}/);
+  assert.match(css, /\.action-panel \.action-controls>\.action-checkfold\{min-height:44px\}/);
+});
+
 test('real timebank click sends only its explicit boolean command', () => {
   const enable = clickHarness(table({ actor: 0, canUseTimebank: true }));
   enable.press({ timebank: 'true' });
