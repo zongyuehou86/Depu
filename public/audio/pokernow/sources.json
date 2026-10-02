@@ -1,0 +1,62 @@
+{
+  "reference": "https://www.pokernow.com/games/pglOSop2vvmwTonKlYKUCC0Zr",
+  "retrieved": "2026-10-03",
+  "assets": [
+    {
+      "name": "card-place",
+      "file": "card-place.mp3",
+      "source": "https://cdn.pokernow.com/card-place-91a5432cb1746e10adf2-20547581d602.mp3",
+      "bytes": 10962,
+      "sha256": "ec073d96edba0c0d7e4008116eea0dfb109c940889ba4b36e9e66d63c25ce029"
+    },
+    {
+      "name": "two-taps",
+      "file": "two-taps.mp3",
+      "source": "https://cdn.pokernow.com/two-taps-3a439173fa8af8b04962-20547581d602.mp3",
+      "bytes": 9366,
+      "sha256": "4afa2ce7efebcacf97e2747de468ce437c4ad6d6fc87ef38eabdc8fe9754054a"
+    },
+    {
+      "name": "fold",
+      "file": "fold.mp3",
+      "source": "https://cdn.pokernow.com/fold-b8e3998153d6255b08b0-20547581d602.mp3",
+      "bytes": 5242,
+      "sha256": "4f872cece6337aa424666d420caf6c76e1df202cf2b1b32f42586a8c9b9b5eef"
+    },
+    {
+      "name": "chips",
+      "file": "chips.mp3",
+      "source": "https://cdn.pokernow.com/chips-928b9d82e44462ebd777-20547581d602.mp3",
+      "bytes": 17563,
+      "sha256": "872358357392bdcd8c43e48deb27d0b0d6166e7eab2724550c2a1511a718e9b1"
+    },
+    {
+      "name": "beep",
+      "file": "beep.mp3",
+      "source": "https://cdn.pokernow.com/beep-29684401aebfe14b9f25-20547581d602.mp3",
+      "bytes": 2112,
+      "sha256": "29060d59c509b23fdf1b25891c55459b549b15988192f8b87162f4c3ca20c5cd"
+    },
+    {
+      "name": "warning-beep",
+      "file": "warning-beep.mp3",
+      "source": "https://cdn.pokernow.com/warning-beep-592bec7b5efa17398085-20547581d602.mp3",
+      "bytes": 7121,
+      "sha256": "10dc527c677e37eb1982de06e9c84e5f75c29a4a8bca085548f1b16b82e6b5c1"
+    },
+    {
+      "name": "winner",
+      "file": "winner.mp3",
+      "source": "https://cdn.pokernow.com/winner-3cd6abf20df59999bcbc-20547581d602.mp3",
+      "bytes": 16596,
+      "sha256": "329ec6acc14d13e7213f04e83a0aca7c7152900cd7da8665ed68149e468b168d"
+    },
+    {
+      "name": "chat-beep",
+      "file": "chat-beep.mp3",
+      "source": "https://cdn.pokernow.com/chat-beep-62b54b49e068f3d8ff55-20547581d602.mp3",
+      "bytes": 3905,
+      "sha256": "2a12e3c71a3d72a410eb63783080ed4caa9787eb5841453c1394dc6aa17e3f91"
+    }
+  ]
+}

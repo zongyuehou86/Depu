@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#071a1b">
+  <meta name="description" content="和朋友联机打德州扑克。输入昵称与房间号即可入场或观战。" data-i18n-content="和朋友联机打德州扑克。输入昵称与房间号即可入场或观战。">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%23071a1b'/%3E%3Cpath d='M32 9C20 23 11 31 11 42a11 11 0 0 0 19 8v5h4v-5a11 11 0 0 0 19-8C53 31 44 23 32 9Z' fill='%23e3bf76'/%3E%3C/svg%3E">
+  <title data-i18n="底池实验室 · 联机牌桌">底池实验室 · 联机牌桌</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/i18n.js" defer></script>
+  <script src="/sounds.js" defer></script>
+  <script src="/sound-events.js" defer></script>
+  <script src="/chip-display.js" defer></script>
+  <script src="/preactions.js" defer></script>
+  <script src="/viewport-guard.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">♠</span><div><strong data-i18n="底池实验室">底池实验室</strong><small data-i18n="联机德州扑克">联机德州扑克</small></div></div>
+      <div class="topbar-right"><span id="connection" class="connection" aria-live="polite" data-i18n="准备连接">准备连接</span><button id="sound-open" class="sound-open" type="button" aria-label="音效设置" data-i18n-aria-label="音效设置" title="音效设置" data-i18n-title="音效设置" aria-controls="sound-panel" aria-expanded="false"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path class="sound-wave" d="M17 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12"/><path class="sound-slash" d="M3 3l18 18"/></svg></button><section id="sound-panel" class="sound-panel" role="group" aria-label="牌桌音效" data-i18n-aria-label="牌桌音效" hidden><div class="sound-panel-heading"><strong data-i18n="牌桌音效">牌桌音效</strong><button id="sound-close" type="button" aria-label="关闭音效设置" data-i18n-aria-label="关闭音效设置">×</button></div><label class="sound-toggle"><span data-i18n="开启音效">开启音效</span><input id="sound-enabled" type="checkbox" checked></label><label class="sound-volume"><span data-i18n="音量">音量</span><input id="sound-volume" type="range" min="0" max="100" value="45"><output id="sound-volume-value" for="sound-volume">45%</output></label><p id="sound-status" class="sound-status" role="status" aria-live="polite"></p><button id="sound-preview" class="button secondary compact" type="button" data-i18n="试听">试听</button></section></div>
+    </header>
+
+    <main>
+      <section id="lobby-screen" class="lobby-screen" aria-labelledby="lobby-title">
+        <div class="lobby-card">
+          <div class="lobby-heading"><span class="eyebrow" data-i18n="私人联机牌桌">私人联机牌桌</span><h1 id="lobby-title" data-i18n="开一桌，或者加入朋友的牌局">开一桌，或者加入朋友的牌局</h1><p data-i18n="无需注册。输入昵称后，可自由选座，也可以一直观战。">无需注册。输入昵称后，可自由选座，也可以一直观战。</p></div>
+          <form id="lobby-form" novalidate>
+            <div class="mode-switch" role="group" aria-label="进入方式" data-i18n-aria-label="进入方式"><button type="button" data-mode="create" class="mode-button selected" aria-pressed="true" data-i18n="开设房间">开设房间</button><button type="button" data-mode="join" class="mode-button" aria-pressed="false" data-i18n="加入房间">加入房间</button></div>
+            <label class="field"><span data-i18n="你的昵称">你的昵称</span><input id="nickname-input" name="nickname" maxlength="18" autocomplete="nickname" placeholder="例如：阿河" data-i18n-placeholder="例如：阿河" required></label>
+            <label id="room-code-field" class="field" hidden><span data-i18n="房间号">房间号</span><input id="room-code-input" name="roomCode" maxlength="8" inputmode="numeric" pattern="[0-9]{4,8}" autocomplete="off" placeholder="输入 4–8 位房间号" data-i18n-placeholder="输入 4–8 位房间号"></label>
+            <label id="recovery-field" class="field" hidden><span data-i18n="恢复码（可选）">恢复码（可选）</span><input id="recovery-input" name="recoveryCode" type="password" autocomplete="off" spellcheck="false" placeholder="换了网址，用它认回原座" data-i18n-placeholder="换了网址，用它认回原座"><small data-i18n="恢复码是本房间的身份凭证，不要发给其他人。">恢复码是本房间的身份凭证，不要发给其他人。</small></label>
+            <p id="saved-identity" class="saved-identity" hidden></p>
+            <div id="create-options" class="field"><span data-i18n="牌桌人数">牌桌人数</span><select id="capacity-input" name="capacity" aria-label="牌桌人数" data-i18n-aria-label="牌桌人数"><option value="4" selected data-i18n="4 人">4 人</option><option value="5" data-i18n="5 人">5 人</option><option value="6" data-i18n="6 人">6 人</option><option value="7" data-i18n="7 人">7 人</option><option value="8" data-i18n="8 人">8 人</option><option value="9" data-i18n="9 人">9 人</option><option value="10" data-i18n="10 人">10 人</option></select></div>
+            <p id="lobby-error" class="form-error" role="alert" hidden></p>
+            <div class="lobby-actions"><button id="enter-button" class="button primary" type="submit" data-i18n="开设房间">开设房间</button><button id="spectate-button" class="button secondary" type="button" data-i18n="直接观战">直接观战</button></div>
+          </form>
+        </div>
+        <p class="lobby-note" data-i18n="默认盲注 10 / 20 · 牌局用独立牌组随机发牌 · 不含电脑玩家">默认盲注 10 / 20 · 牌局用独立牌组随机发牌 · 不含电脑玩家</p>
+      </section>
+
+      <section id="room-screen" class="room-screen" hidden aria-label="联机牌桌" data-i18n-aria-label="联机牌桌">
+        <div class="table-status"><span id="hand-label" data-i18n="等待开局">等待开局</span><span id="street-label" data-i18n="盲注 10 / 20">盲注 10 / 20</span><span id="timer-label" class="timer-label" role="timer" hidden></span></div>
+
+        <div class="play-layout">
+          <div class="play-main">
+            <section class="felt-wrap" aria-label="德州扑克牌桌" data-i18n-aria-label="德州扑克牌桌">
+              <div class="felt"><div class="felt-ring"></div>
+                <div id="opponent-seats" class="opponent-seats"></div>
+                <div class="board-center"><div id="pot-label" class="pot-pill" data-i18n="底池 0">底池 0</div><div id="board-cards" class="cards board-cards" aria-label="公共牌" data-i18n-aria-label="公共牌"></div><p id="board-caption" class="board-caption" data-i18n="等待发牌">等待发牌</p><div id="runout-equity" class="runout-equity" aria-label="协商时胜率" data-i18n-aria-label="协商时胜率" hidden></div><div id="hand-result" class="hand-result" role="status" aria-live="polite" hidden></div></div>
+                <div id="my-seat" class="my-seat"></div>
+                <div class="table-social"><button id="gift-open" type="button" class="mini-button gift-open" aria-label="送礼物" data-i18n-aria-label="送礼物" aria-controls="gift-panel" aria-expanded="false" title="送礼物" data-i18n-title="送礼物"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10h18v11H3zM2 7h20v3H2zM12 7v14"/><path d="M12 7C8 7 5 5.6 5 3.8 5 2.3 6.2 1.5 7.5 2c2 .7 3.6 3.5 4.5 5Zm0 0c4 0 7-1.4 7-3.2 0-1.5-1.2-2.3-2.5-1.8-2 .7-3.6 3.5-4.5 5Z"/></svg></button></div>
+              </div>
+            </section>
+            <div class="action-stack"><section id="action-panel" class="action-panel panel" aria-labelledby="action-title"><h2 id="action-title" class="visually-hidden" data-i18n="牌局操作">牌局操作</h2><div class="action-meta"><span id="to-call-label" class="muted-text"></span><span id="action-timer" class="action-timer" role="timer" hidden></span></div><div id="action-controls" class="action-controls"></div></section><div id="runout-lanes" class="runout-lanes" aria-label="两次跑马牌面" data-i18n-aria-label="两次跑马牌面" hidden></div></div>
+            <section class="panel table-panel"><div class="panel-title"><div><span class="eyebrow" data-i18n="座位与筹码">座位与筹码</span><h2 data-i18n="房间信息">房间信息</h2></div></div><div class="room-identity"><span class="eyebrow" data-i18n="当前房间">当前房间</span><div><strong id="room-code">——</strong><button id="copy-room" type="button" class="mini-button" data-i18n="复制房间号">复制房间号</button><button id="copy-link" type="button" class="mini-button" data-i18n="复制邀请链接">复制邀请链接</button></div></div><div id="room-summary" class="room-summary"></div><div id="room-controls" class="room-controls"></div><div id="secondary-room-actions" class="secondary-room-actions"><button id="leave-button" class="quiet-button" type="button" hidden data-i18n="返回大厅">返回大厅</button><span id="secondary-presence"></span></div><p id="table-notice" class="table-notice" aria-live="polite"></p><div class="recovery-control"><button id="copy-recovery" type="button" class="quiet-button" data-i18n="复制我的恢复码">复制我的恢复码</button><details id="recovery-details"><summary data-i18n="无法复制？手动查看">无法复制？手动查看</summary><input id="recovery-display" type="text" readonly aria-label="我的恢复码" data-i18n-aria-label="我的恢复码"></details><p class="small-note" data-i18n="换了网址，用它认回原座。恢复码相当于本房间身份凭证，请勿转发。">换了网址，用它认回原座。恢复码相当于本房间身份凭证，请勿转发。</p><button id="switch-player" type="button" class="quiet-button switch-button" data-i18n="切换玩家">切换玩家</button><p class="small-note" data-i18n="切换会先离开当前座位；请先保存旧身份的恢复码。">切换会先离开当前座位；请先保存旧身份的恢复码。</p></div></section>
+          </div>
+
+          <aside class="sidebar">
+            <details id="ledger-details" class="panel ledger-panel"><summary><span><span class="eyebrow" data-i18n="按需查看">按需查看</span><strong data-i18n="补码与总盈亏">补码与总盈亏</strong></span><span class="disclosure" aria-hidden="true">⌄</span></summary><div id="ledger-content" class="ledger-content"></div></details>
+            <details id="fairness-details" class="panel ledger-panel"><summary><span><span class="eyebrow" data-i18n="发牌公开记录">发牌公开记录</span><strong data-i18n="随机牌堆信息">随机牌堆信息</strong></span><span class="disclosure" aria-hidden="true">⌄</span></summary><div id="fairness-content" class="ledger-content"></div></details>
+          </aside>
+        </div>
+      </section>
+    </main>
+    <footer class="language-footer"><label class="display-pref" for="chip-unit-select"><span data-i18n="金额显示">金额显示</span><select id="chip-unit-select" aria-label="金额显示" data-i18n-aria-label="金额显示"><option value="chips" selected data-i18n="筹码">筹码</option><option value="bb">BB</option></select></label><label class="display-pref" for="language-select"><span data-i18n="语言">语言</span><select id="language-select" aria-label="语言" data-i18n-aria-label="语言"><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option><option value="en">English</option></select></label></footer>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <div id="room-effect" class="room-effect" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+  <div id="gift-effects" class="gift-effects" aria-live="polite" aria-atomic="false"></div>
+  <div id="seat-backdrop" class="gift-backdrop" hidden></div>
+  <section id="seat-panel" class="seat-dialog panel" role="dialog" aria-modal="true" aria-labelledby="seat-title" hidden><div class="panel-title"><div><span class="eyebrow" data-i18n="入座">入座</span><h2 id="seat-title" data-i18n="选择一个空位">选择一个空位</h2></div><button id="seat-close" class="gift-close" type="button" aria-label="关闭入座面板" data-i18n-aria-label="关闭入座面板">×</button></div><span id="seat-count" class="muted-text"></span><label class="field seat-buyin" for="seat-buyin-input"><span data-i18n="带入筹码">带入筹码</span><input id="seat-buyin-input" type="number" min="20" max="1000000" step="1" inputmode="numeric" value="2000"></label><div id="seat-picker" class="seat-picker"></div><p id="seat-note" class="small-note" data-i18n="坐下后可补入 2,000 筹码。">坐下后可补入 2,000 筹码。</p></section>
+  <div id="gift-backdrop" class="gift-backdrop" hidden></div>
+  <section id="gift-panel" class="gift-panel" role="dialog" aria-modal="true" aria-labelledby="gift-title" hidden>
+    <div class="gift-panel-head"><div><span class="eyebrow" data-i18n="给朋友一点心意">给朋友一点心意</span><h2 id="gift-title" data-i18n="送礼物">送礼物</h2></div><button id="gift-close" class="gift-close" type="button" aria-label="关闭礼物面板" data-i18n-aria-label="关闭礼物面板">×</button></div>
+    <div class="gift-panel-body">
+      <section class="gift-choice" aria-labelledby="gift-bouquet-title"><div class="gift-choice-head"><div><h3 id="gift-bouquet-title" data-i18n="玫瑰花束">玫瑰花束</h3><p data-i18n="50 筹码 / 束">50 筹码 / 束</p></div></div><div class="rose-types" role="group" aria-label="玫瑰颜色" data-i18n-aria-label="玫瑰颜色"><button type="button" data-rose-type="whiteRose" aria-pressed="true"><img src="/assets/gift-bouquet-classic.png" alt=""><span data-i18n="白玫瑰">白玫瑰</span></button><button type="button" data-rose-type="redRose" aria-pressed="false"><img src="/assets/gift-red-rose-classic.png" alt=""><span data-i18n="红玫瑰">红玫瑰</span></button></div>
+        <label class="gift-field" for="gift-recipient"><span data-i18n="送给">送给</span><select id="gift-recipient" aria-label="花束接收者" data-i18n-aria-label="花束接收者"></select></label>
+        <div class="gift-count-row"><div class="gift-presets" role="group" aria-label="花束数量" data-i18n-aria-label="花束数量"><button type="button" data-gift-count="1" aria-pressed="true" data-i18n="1 束">1 束</button><button type="button" data-gift-count="9" aria-pressed="false" data-i18n="9 束">9 束</button><button type="button" data-gift-count="99" aria-pressed="false" data-i18n="99 束">99 束</button></div><label class="gift-custom" for="gift-count"><span data-i18n="自定义">自定义</span><input id="gift-count" type="number" min="1" step="1" inputmode="numeric" value="1"></label></div>
+        <div class="gift-total"><span data-i18n="合计">合计</span><strong id="gift-total" data-i18n="50 筹码">50 筹码</strong></div><p id="gift-hint" class="gift-hint"></p><button id="gift-send-bouquet" class="button primary full" type="button" data-i18n="送出花束">送出花束</button>
+      </section>
+      <section class="gift-choice gift-sneak" aria-labelledby="gift-sneak-title"><div><h3 id="gift-sneak-title" data-i18n="悄悄地进村">悄悄地进村</h3><p data-i18n="免费 · 全房间可见">免费 · 全房间可见</p></div><button id="gift-send-sneak" class="button secondary compact" type="button" data-i18n="发送暗号">发送暗号</button></section>
+      <details class="gift-activity"><summary data-i18n="我的赠礼记录">我的赠礼记录</summary><div id="gift-activity-content" class="gift-activity-content"></div></details>
+    </div>
+  </section>
+</body>
+</html>
