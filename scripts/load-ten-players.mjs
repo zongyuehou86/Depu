@@ -14,7 +14,7 @@ import WebSocket from 'ws';
 // an explicit flag. Tokens, private cards and server snapshots are never logged.
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const args = process.argv.slice(2);
-let baseURL, local = false, allowRemote = false, hands = 40;
+let baseURL, local = false, allowRemote = false, hands = 40, transportTimeoutMs = 5000;
 for (let index = 0; index < args.length; index++) {
   const arg = args[index];
   if (arg === '--local') local = true;
@@ -36,9 +36,14 @@ if (!local && !baseURL) throw new Error('Pass a base URL or --local; use --help'
 if (baseURL) {
   const url = new URL(baseURL);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Use an HTTP(S) URL without credentials');
-  if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) && !allowRemote) {
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if (!loopback && !allowRemote) {
     throw new Error('External targets require --allow-remote. Use an isolated test copy.');
   }
+  // Public-path probes measured a 6.49-second first WS state while other clients
+  // already received newer versions. This remote transport allowance leaves
+  // HTTP command (8 s) and health (3 s) processing deadlines unchanged.
+  if (!loopback) transportTimeoutMs = 12_000;
   baseURL = url.origin;
 }
 
@@ -139,7 +144,7 @@ async function connect(player) {
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   url.searchParams.set('room', roomCode);
   url.searchParams.set('token', player.token);
-  const socket = new WebSocket(url, { headers: { Origin: baseURL }, handshakeTimeout: 5000 });
+  const socket = new WebSocket(url, { headers: { Origin: baseURL }, handshakeTimeout: transportTimeoutMs });
   const connection = { socket, bytesRead: 0, extensions: '' };
   connections.push(connection);
   socket.once('open', () => { connection.extensions = socket.extensions || ''; });
@@ -153,7 +158,7 @@ async function connect(player) {
   player.socket = socket;
   let resolveFirst, rejectFirst;
   const first = new Promise((resolve, reject) => { resolveFirst = resolve; rejectFirst = reject; });
-  const timer = setTimeout(() => rejectFirst(new Error('Synthetic client initial state timed out')), 5000);
+  const timer = setTimeout(() => rejectFirst(new Error('Synthetic client initial state timed out')), transportTimeoutMs);
   socket.on('message', raw => {
     if (player.socket !== socket) return;
     const at = performance.now();
@@ -210,12 +215,12 @@ async function waitUntil(predicate, timeoutMs = 8000, description = 'state synch
 async function synchronized(version, start) {
   try {
     await waitUntil(() => players.every(player => player.socket?.readyState === WebSocket.OPEN
-      && player.state?.stateVersion >= version), 5000, 'all 10 WebSocket clients');
+      && player.state?.stateVersion >= version), transportTimeoutMs, 'all 10 WebSocket clients');
   } catch (error) {
     if (error.message !== 'Timed out waiting for all 10 WebSocket clients') throw error;
     const now = performance.now();
     const age = at => at === null ? null : round(Math.max(0, now - at));
-    const diagnostic = { expectedVersion: version, clients: players.map(player => ({
+    const diagnostic = { expectedVersion: version, transportTimeoutMs, clients: players.map(player => ({
       seat: player.seat, version: player.state?.stateVersion ?? null,
       readyState: player.socket?.readyState ?? null,
       ageMs: age(player.lastStateAt), messageAgeMs: age(player.lastMessageAt),
@@ -455,7 +460,7 @@ try {
   validateState(final);
   healthRunning = false;
   await healthTask;
-  console.log(JSON.stringify({ result: 'PASS', players: 10, normalHands: hands, normalActions,
+  console.log(JSON.stringify({ result: 'PASS', players: 10, normalHands: hands, normalActions, transportTimeoutMs,
     allInActions: allIn.actions, reconnects: metrics.reconnects, setupWarmupHands: metrics.setupWarmupHands,
     elapsedSeconds: round((performance.now() - startedAt) / 1000),
     commandMs: distribution(metrics.commands.map(row => row.ms)),
@@ -472,7 +477,7 @@ try {
 } catch (error) {
   let message = error.message;
   for (const player of players) if (player.token) message = message.replaceAll(player.token, '[redacted]');
-  console.error(JSON.stringify({ result: 'FAIL', phase, roomCode, message }));
+  console.error(JSON.stringify({ result: 'FAIL', phase, roomCode, transportTimeoutMs, message }));
   process.exitCode = 1;
 } finally {
   healthRunning = false;
