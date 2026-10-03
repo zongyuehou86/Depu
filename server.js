@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Room, GameError, capacityValue, ROOM_CLOSED_MESSAGE } from './room.js';
 import { cardLabel } from './engine.js';
+import { EquityPool } from './equity-pool.js';
+import { sendLatestState, clearSocketQueue, startHeartbeat } from './realtime.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(here, 'public');
@@ -43,6 +45,9 @@ const transactionIndex = new Map();
 const roomSocketHandlers = new WeakMap();
 // A just-created identity may be joined by a second tab before its first socket opens.
 const pendingWelcomes = new WeakMap();
+const equityPool = new EquityPool();
+const equityJobs = new WeakMap();
+const roomOptions = { deferEquity: true };
 
 // Limit data is keyed by IP, not room. Expired entries are removed even when
 // a previously seen IP never sends another request.
@@ -380,8 +385,7 @@ function ensurePrivateHandRecord(room) {
       !Number.isSafeInteger(room.handNo) || room.handNo < 1) {
     throw new Error('私有牌局记录的房间编号或手数无效');
   }
-  const content = privateHandRecord(room);
-  if (content === null) return;
+  if (room.status !== 'finished' || !room.hand?.result) return;
   const roomDir = path.join(handRecordsDir, room.code);
   mkdirSync(roomDir, { recursive: true, mode: 0o700 });
   if (lstatSync(roomDir).isSymbolicLink() || !statSync(roomDir).isDirectory() ||
@@ -401,6 +405,8 @@ function ensurePrivateHandRecord(room) {
     chmodSync(target, 0o600);
     return;
   }
+  const content = privateHandRecord(room);
+  if (content === null) return;
   const temporary = `${target}.${process.pid}.${randomInt(1_000_000)}.tmp`;
   try {
     writeFileSync(temporary, content, { mode: 0o600, flag: 'wx', flush: true });
@@ -431,7 +437,7 @@ function broadcast(room) {
       throw error;
     }
     for (const socket of member.connections) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(text);
+      sendLatestState(socket, text);
     }
   }
 }
@@ -634,6 +640,35 @@ function roomChanged(room) {
   broadcast(room);
   room.persistenceFault = false;
   scheduleDeadline(room);
+  scheduleEquity(room);
+}
+
+function scheduleEquity(room) {
+  const runout = room.hand?.runout;
+  if (room.status !== 'playing' || runout?.phase !== 'calculating' || equityJobs.has(room)) return;
+  const input = room.runoutEquityInput();
+  if (!input) return;
+  equityJobs.set(room, runout);
+  // One retry covers a crashed worker. A failed display calculation must never
+  // keep the actual hand stuck: the committed deck can still run once safely.
+  const calculate = async () => {
+    try { return await equityPool.calculate(input); }
+    catch { return await equityPool.calculate(input); }
+  };
+  calculate().catch(error => {
+    console.error(`房间 ${room.code} 胜率计算失败，继续发一次: ${error.message}`);
+    return null;
+  }).then(result => {
+    equityJobs.delete(room);
+    if (rooms.get(room.code) !== room || room.closedAt || room.hand?.runout !== runout ||
+        runout.phase !== 'calculating') return;
+    try { if (room.completeRunoutEquity(result)) room.changed(); }
+    catch (error) {
+      room.persistenceFault = true;
+      scheduleDeadline(room);
+      console.error(`房间 ${room.code} 胜率状态保存失败: ${error.message}`);
+    }
+  });
 }
 
 function persistFinancialCommand(room) {
@@ -766,7 +801,7 @@ for (const file of readdirSync(dataDir)) {
         closedAt, closeReason: 'inactive' }, true);
       continue;
     }
-    const room = Room.fromJSON(record, roomChanged);
+    const room = Room.fromJSON(record, roomChanged, roomOptions);
     recoverMoneyTransactions(room);
     if (room.pause && room.pause.endAt <= Date.now()) room.pause = null;
     room.reconcileAutoStart(); // A replayed gift may have ended the previously active hand.
@@ -840,7 +875,7 @@ async function route(request, response) {
     if (rooms.has(code) || existsSync(path.join(dataDir, `${code}.json`))) {
       throw new GameError('该房间号已存在', 409);
     }
-    const room = new Room(code, capacity, roomChanged);
+    const room = new Room(code, capacity, roomChanged, roomOptions);
     rooms.set(code, room);
     persist(room);
     return sendJSON(response, 201, { roomCode: code });
@@ -900,7 +935,11 @@ const server = http.createServer((request, response) => {
   });
 });
 
-const webSockets = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024, perMessageDeflate: false });
+const webSockets = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024,
+  perMessageDeflate: { threshold: 1024, concurrencyLimit: 2,
+    serverNoContextTakeover: true, clientNoContextTakeover: true,
+    zlibDeflateOptions: { level: 3, memLevel: 7 } } });
+startHeartbeat(webSockets);
 server.on('upgrade', (request, socket, head) => {
   try {
     if (!originAllowed(request)) throw new GameError('不允许跨站连接', 403);
@@ -919,6 +958,9 @@ server.on('upgrade', (request, socket, head) => {
         return;
       }
       member.connections.add(ws);
+      ws.isAlive = true;
+      const onPong = () => { ws.isAlive = true; };
+      ws.on('pong', onPong);
       pendingWelcomes.delete(member);
       const onMessage = message => {
         try {
@@ -932,16 +974,20 @@ server.on('upgrade', (request, socket, head) => {
       const onClose = () => {
         member.connections.delete(ws);
         detach();
-        if (!room.closedAt) broadcast(room);
+        if (!room.closedAt) {
+          try { room.changed(); }
+          catch (error) { console.error(`房间 ${room.code} 连接状态保存失败: ${error.message}`); }
+        }
       };
       const onError = () => {
-        member.connections.delete(ws);
-        detach();
+        onClose();
         ws.terminate();
       };
       const detach = () => {
         if (!roomSocketHandlers.has(ws)) return;
         roomSocketHandlers.delete(ws);
+        clearSocketQueue(ws);
+        ws.off('pong', onPong);
         ws.off('message', onMessage);
         ws.off('close', onClose);
         ws.off('error', onError);
@@ -951,7 +997,7 @@ server.on('upgrade', (request, socket, head) => {
       ws.on('message', onMessage);
       ws.on('close', onClose);
       ws.on('error', onError);
-      broadcast(room);
+      room.changed();
     });
   } catch (error) {
     const status = error instanceof GameError ? error.status : 400;

@@ -319,6 +319,8 @@
     ,['本手进行中入座，下手开始参与。', '本手進行中入座，下一手起參與。', 'You join from the next hand.']
     ,['来自 {name}', '來自 {name}', 'From {name}']
     ,['正在跑马发牌', '正在跑馬發牌', 'Dealing runout']
+    ,['正在计算胜率…', '正在計算勝率…', 'Calculating equity…']
+    ,['网络请求超时，请检查连接后重试。', '網路請求逾時，請檢查連線後重試。', 'The request timed out. Check your connection and try again.']
     ,['正在重连', '正在重新連線', 'Reconnecting']
     ,['现在展示花束，手末统一结算；不足会按 2,000 筹码自动补足。', '現在展示花束，本手結束後一併結算；若不足，會按每次 2,000 籌碼自動補足。', 'Bouquets show now and settle after this hand. Shortfalls trigger 2,000-chip rebuys.']
     ,['白玫瑰 ×{quantity}', '白玫瑰 ×{quantity}', 'White roses ×{quantity}']

@@ -52,18 +52,80 @@ export function compareValues(a, b) {
   return 0;
 }
 
+function straightFromMask(bits) {
+  // An ace can also be rank 1. Each surviving bit ends five consecutive ranks.
+  if (bits & (1 << 14)) bits |= 1 << 1;
+  const runs = bits & (bits << 1) & (bits << 2) & (bits << 3) & (bits << 4);
+  return runs ? 31 - Math.clz32(runs) : 0;
+}
+
 export function evaluateBest(cards) {
   if (cards.length < 5 || cards.length > 7) return null;
-  let best = null;
-  for (let a = 0; a < cards.length - 4; a++)
-    for (let b = a + 1; b < cards.length - 3; b++)
-      for (let c = b + 1; c < cards.length - 2; c++)
-        for (let d = c + 1; d < cards.length - 1; d++)
-          for (let e = d + 1; e < cards.length; e++) {
-            const value = evaluateFive([cards[a], cards[b], cards[c], cards[d], cards[e]]);
-            if (!best || compareValues(value, best) > 0) best = value;
-          }
-  return best;
+  // Count all ranks once instead of constructing up to 21 five-card hands.
+  // The rank masks preserve suit-specific straights and the ace-low wheel.
+  const counts = new Uint8Array(15);
+  const suitCounts = [0, 0, 0, 0], suitMasks = [0, 0, 0, 0];
+  let mask = 0;
+  for (let index = 0; index < cards.length; index++) {
+    const card = cards[index], value = rank(card), color = suit(card);
+    const bit = 1 << value;
+    counts[value]++;
+    suitCounts[color]++;
+    suitMasks[color] |= bit;
+    mask |= bit;
+  }
+  let flushMask = 0;
+  for (let color = 0; color < 4; color++) {
+    if (suitCounts[color] < 5) continue;
+    flushMask = suitMasks[color];
+    const straightFlush = straightFromMask(flushMask);
+    if (straightFlush) return [8, straightFlush];
+  }
+  let four = 0, three = 0, pair = 0, secondPair = 0;
+  for (let value = 14; value >= 2; value--) {
+    const count = counts[value];
+    if (count === 4) four = value;
+    else if (count === 3) {
+      if (!three) three = value;
+      else if (!pair) pair = value;
+    } else if (count === 2) {
+      if (!pair) pair = value;
+      else if (!secondPair) secondPair = value;
+    }
+  }
+  if (four) {
+    for (let value = 14; value >= 2; value--) {
+      if (value !== four && counts[value]) return [7, four, value];
+    }
+  }
+  if (three && pair) return [6, three, pair];
+  if (flushMask) {
+    const value = [5];
+    for (let rank = 14; rank >= 2 && value.length < 6; rank--) {
+      if (flushMask & (1 << rank)) value.push(rank);
+    }
+    return value;
+  }
+  const straight = straightFromMask(mask);
+  if (straight) return [4, straight];
+  if (three) {
+    const value = [3, three];
+    for (let rank = 14; rank >= 2 && value.length < 4; rank--) {
+      if (rank !== three && counts[rank]) value.push(rank);
+    }
+    return value;
+  }
+  if (secondPair) {
+    for (let value = 14; value >= 2; value--) {
+      if (value !== pair && value !== secondPair && counts[value]) return [2, pair, secondPair, value];
+    }
+  }
+  const value = pair ? [1, pair] : [0];
+  const length = pair ? 5 : 6;
+  for (let rank = 14; rank >= 2 && value.length < length; rank--) {
+    if (rank !== pair && counts[rank]) value.push(rank);
+  }
+  return value;
 }
 
 // Compact public wording for a completed five-card-or-better hand.

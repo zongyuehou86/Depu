@@ -204,6 +204,14 @@ test('runout choices and hand reveal replace ordinary betting controls below the
   assert.match(controls.innerHTML, /data-runout-choice="2"/);
   assert.doesNotMatch(controls.innerHTML, /data-action=|data-preaction=|raise-amount/);
 
+  const calculating = table({ runout: { phase: 'calculating', equity: [], deadline: null } });
+  ui.renderActions(calculating);
+  assert.equal(panel.hidden, false);
+  assert.equal(ui.nodes['#action-title'].textContent, '正在计算胜率…');
+  assert.match(controls.innerHTML, /正在计算胜率…/);
+  assert.doesNotMatch(controls.innerHTML, /<button|data-action=|data-runout-choice=/,
+    'equity calculation offers no betting or premature vote');
+
   const response = table({ runout: { phase: 'leaderVote', leadingSeat: 0 } });
   ui.renderActions(response);
   assert.match(controls.innerHTML, /data-runout-response="true"/);
