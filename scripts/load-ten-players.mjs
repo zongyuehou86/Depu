@@ -43,7 +43,8 @@ if (baseURL) {
 }
 
 const players = Array.from({ length: 10 }, (_, seat) => ({ seat, nickname: `LoadPlayer${seat + 1}`,
-  token: '', socket: null, state: null, receipts: new Map() }));
+  token: '', socket: null, state: null, receipts: new Map(), lastMessageAt: null,
+  lastStateAt: null, lastClose: null }));
 const connections = [];
 const metrics = { commands: [], broadcasts: [], stateBytes: [], health: [], totalWsBytes: 0,
   stateMessages: 0, privacyChecks: 0, conservationChecks: 0, reconnects: 0, setupWarmupHands: 0 };
@@ -76,6 +77,7 @@ function transportSummary() {
 }
 
 async function request(method, suffix, body, player, timeoutMs = 8000) {
+  const started = performance.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -90,6 +92,16 @@ async function request(method, suffix, body, player, timeoutMs = 8000) {
       throw error;
     }
     return data;
+  } catch (error) {
+    const diagnostic = { method, suffix: suffix.split(/[?#]/)[0], timeoutMs,
+      elapsedMs: round(performance.now() - started) };
+    // Fetch aborts are DOMExceptions with a read-only message. Wrap them while
+    // preserving HTTP status and the original text used for the auto-start race.
+    const failure = new Error(`${error.message || 'Request failed'} [request ${JSON.stringify(diagnostic)}]`);
+    failure.name = error.name || 'Error';
+    if (error.status !== undefined) failure.status = error.status;
+    failure.request = diagnostic;
+    throw failure;
   } finally { clearTimeout(timer); }
 }
 
@@ -131,19 +143,28 @@ async function connect(player) {
   const connection = { socket, bytesRead: 0, extensions: '' };
   connections.push(connection);
   socket.once('open', () => { connection.extensions = socket.extensions || ''; });
-  socket.once('close', () => { connection.bytesRead = socket._socket?.bytesRead || 0; });
+  socket.once('close', (code, reason) => {
+    connection.bytesRead = socket._socket?.bytesRead || 0;
+    let text = String(reason || '');
+    for (const identity of players) if (identity.token) text = text.replaceAll(identity.token, '[redacted]');
+    text = text.replace(/[A-Za-z0-9_-]{40,80}/g, '[redacted]').slice(0, 160);
+    player.lastClose = { code, reason: text, at: performance.now() };
+  });
   player.socket = socket;
   let resolveFirst, rejectFirst;
   const first = new Promise((resolve, reject) => { resolveFirst = resolve; rejectFirst = reject; });
   const timer = setTimeout(() => rejectFirst(new Error('Synthetic client initial state timed out')), 5000);
   socket.on('message', raw => {
     if (player.socket !== socket) return;
+    const at = performance.now();
+    player.lastMessageAt = at;
     metrics.totalWsBytes += raw.byteLength;
     try {
       const packet = JSON.parse(String(raw));
       if (packet.type === 'error') throw new Error('Synthetic WebSocket command error');
       if (packet.type !== 'state') return;
-      const state = packet.state, at = performance.now();
+      const state = packet.state;
+      player.lastStateAt = at;
       validateState(state);
       if (player.state) assert.ok(state.stateVersion >= player.state.stateVersion, 'WebSocket versions cannot go backwards');
       player.state = state;
@@ -187,8 +208,25 @@ async function waitUntil(predicate, timeoutMs = 8000, description = 'state synch
 }
 
 async function synchronized(version, start) {
-  await waitUntil(() => players.every(player => player.socket?.readyState === WebSocket.OPEN
-    && player.state?.stateVersion >= version), 5000, 'all 10 WebSocket clients');
+  try {
+    await waitUntil(() => players.every(player => player.socket?.readyState === WebSocket.OPEN
+      && player.state?.stateVersion >= version), 5000, 'all 10 WebSocket clients');
+  } catch (error) {
+    if (error.message !== 'Timed out waiting for all 10 WebSocket clients') throw error;
+    const now = performance.now();
+    const age = at => at === null ? null : round(Math.max(0, now - at));
+    const diagnostic = { expectedVersion: version, clients: players.map(player => ({
+      seat: player.seat, version: player.state?.stateVersion ?? null,
+      readyState: player.socket?.readyState ?? null,
+      ageMs: age(player.lastStateAt), messageAgeMs: age(player.lastMessageAt),
+      lastClose: player.lastClose ? { code: player.lastClose.code, reason: player.lastClose.reason,
+        ageMs: age(player.lastClose.at) } : null
+    })) };
+    const failure = new Error(`${error.message} [synchronized ${JSON.stringify(diagnostic)}]`);
+    failure.expectedVersion = diagnostic.expectedVersion;
+    failure.clients = diagnostic.clients;
+    throw failure;
+  }
   if (start !== undefined) {
     for (const player of players) {
       const receivedAt = player.receipts.get(version)
@@ -304,7 +342,13 @@ async function reconnectTwo() {
   await synchronized(data.state.stateVersion);
   for (const player of [players[2], players[7]]) {
     assert.equal(player.state.hero.seat, player.seat, 'Reconnection preserves the original seat');
-    assert.equal(player.state.handNo, data.state.handNo, 'Reconnection catches up to the current hand');
+    assert.ok(player.state.stateVersion >= data.state.stateVersion, 'Reconnection catches up to the HTTP snapshot version');
+    if (player.state.stateVersion === data.state.stateVersion) {
+      assert.equal(player.state.handNo, data.state.handNo, 'The same version must describe the same hand');
+    } else {
+      // Auto-start can advance the live WS state while the HTTP snapshot is in flight.
+      assert.ok(player.state.handNo >= data.state.handNo, 'A newer reconnect state cannot regress the hand');
+    }
   }
   metrics.reconnects += 2;
 }
