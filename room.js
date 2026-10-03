@@ -167,7 +167,7 @@ export function bigBlindValue(value) {
 }
 
 export class Room {
-  constructor(code, capacity = 4, onChange = () => {}) {
+  constructor(code, capacity = 4, onChange = () => {}, options = {}) {
     this.code = code;
     this.capacity = capacityValue(capacity);
     this.bigBlind = BIG_BLIND;
@@ -185,6 +185,7 @@ export class Room {
     this.events = [];
     this.history = [];
     this.eventSeq = 0;
+    this.stateVersion = 0;
     this.transactionSeq = 0;
     this.commandReceipts = [];
     this.pendingFinancial = [];
@@ -196,6 +197,7 @@ export class Room {
     this.closedAt = null;
     this.closeReason = null;
     this.onChange = onChange;
+    this.deferEquity = options.deferEquity === true;
   }
 
   static expiryInfoFromJSON(data) {
@@ -205,13 +207,14 @@ export class Room {
       expiryAt: Date.parse(lastHandStartedAt ?? createdAt) + ROOM_IDLE_MS };
   }
 
-  static fromJSON(data, onChange = () => {}) {
-    const room = new Room(data.code, data.capacity, onChange);
+  static fromJSON(data, onChange = () => {}, options = {}) {
+    const room = new Room(data.code, data.capacity, onChange, options);
     room.bigBlind = bigBlindValue(data.bigBlind ?? BIG_BLIND);
     room.smallBlind = Math.max(1, Math.floor(room.bigBlind / 2));
     room.pendingBigBlind = data.pendingBigBlind == null ? null : bigBlindValue(data.pendingBigBlind);
     room.pendingCapacity = data.pendingCapacity == null ? null : capacityValue(data.pendingCapacity);
     room.tableSettingsNotice = data.tableSettingsNotice ?? null;
+    room.stateVersion = Number.isSafeInteger(data.stateVersion) && data.stateVersion >= 0 ? data.stateVersion : 0;
     const expiry = Room.expiryInfoFromJSON(data);
     room.createdAt = expiry.createdAt;
     room.lastHandStartedAt = expiry.lastHandStartedAt;
@@ -316,7 +319,8 @@ export class Room {
       members: [...this.members.values()].map(({ connections, ...member }) => member),
       seats: this.seats, status: this.status, handNo: this.handNo, hand: this.hand,
       nextHandAt: this.nextHandAt,
-      events: this.events, history: this.history, eventSeq: this.eventSeq, createdAt: this.createdAt,
+      events: this.events, history: this.history, eventSeq: this.eventSeq,
+      stateVersion: this.stateVersion, createdAt: this.createdAt,
       lastHandStartedAt: this.lastHandStartedAt, closedAt: this.closedAt, closeReason: this.closeReason,
       transactionSeq: this.transactionSeq, commandReceipts: this.commandReceipts,
       pendingFinancial: this.pendingFinancial,
@@ -325,7 +329,11 @@ export class Room {
     };
   }
 
-  changed() { this.reconcileAutoStart(); this.onChange(this); }
+  changed() {
+    this.reconcileAutoStart();
+    this.stateVersion++;
+    this.onChange(this);
+  }
   expiryAt() { return Date.parse(this.lastHandStartedAt ?? this.createdAt) + ROOM_IDLE_MS; }
   isExpired(now = Date.now()) { return !this.closedAt && now >= this.expiryAt(); }
   assertOpen(now = Date.now()) {
@@ -1060,13 +1068,40 @@ export class Room {
       player.hand.timebankEnabled = false;
     }
     for (const player of this.livePlayers()) player.hand.shown = true;
-    const players = this.livePlayers().map(player => ({
-      seat: player.seat, hole: player.hand.hole.map(item => item.card)
-    }));
-    const { equity, scores, method, scenarios, errorPct } =
-      calculateShowdownEquity(players, this.hand.board.map(item => item.card));
+    this.hand.runout = {
+      phase: 'calculating', eligibleForTwice: false, reason: null,
+      equity: [], equityMethod: null, equitySamples: null, equityErrorPct: null,
+      trailingSeat: null, leadingSeat: null, proposal: null, response: null,
+      times: null, deadline: null, nextCardAt: null,
+      boardIndex: 0, initialStreet, sharedBoard, secondBoard: null,
+      boardResults: []
+    };
+    if (!this.deferEquity) {
+      const { players, board } = this.runoutEquityInput();
+      this.completeRunoutEquity(calculateShowdownEquity(players, board));
+    }
+  }
+
+  runoutEquityInput() {
+    if (this.status !== 'playing' || this.hand?.runout?.phase !== 'calculating') return null;
+    return {
+      players: this.livePlayers().map(player => ({
+        seat: player.seat, hole: player.hand.hole.map(item => item.card)
+      })),
+      board: this.hand.runout.sharedBoard.map(item => item.card)
+    };
+  }
+
+  // The caller publishes/persists the completed calculation with changed().
+  // This also lets the synchronous command path publish only its final state.
+  completeRunoutEquity(calculation) {
+    const input = this.runoutEquityInput();
+    if (!input) return false;
+    const { equity = [], scores = [], method = null, scenarios = null, errorPct = null } = calculation ?? {};
+    const players = input.players;
     let trailingSeat = null, leadingSeat = null, reason = null;
-    if (players.length > 2) reason = 'multiway';
+    if (!calculation) reason = 'equityUnavailable';
+    else if (players.length > 2) reason = 'multiway';
     else if (Math.abs(scores[0].share - scores[1].share) < 1e-9) reason = 'equityTie';
     else {
       const leading = scores[0].share > scores[1].share ? 0 : 1;
@@ -1074,19 +1109,19 @@ export class Room {
       trailingSeat = scores[1 - leading].seat;
     }
     const eligibleForTwice = reason === null;
-    this.hand.runout = {
+    Object.assign(this.hand.runout, {
       phase: eligibleForTwice ? 'trailingVote' : 'dealing', eligibleForTwice, reason,
       equity, equityMethod: method, equitySamples: scenarios, equityErrorPct: errorPct,
       trailingSeat, leadingSeat, proposal: null, response: null,
       times: eligibleForTwice ? null : 1,
       deadline: eligibleForTwice ? this.timerBase() + RUNOUT_VOTE_MS : null,
-      nextCardAt: null,
-      boardIndex: 0, initialStreet, sharedBoard, secondBoard: null,
-      boardResults: []
-    };
+      nextCardAt: null
+    });
     this.addEvent(`无人可继续下注，底牌公开并进入跑马${reason === 'multiway' ? '；超过两名玩家，仅发一次' :
-      reason === 'equityTie' ? '；双方胜率相同，仅发一次' : '；等待落后方选择发一次或两次'}`);
+      reason === 'equityTie' ? '；双方胜率相同，仅发一次' :
+      reason === 'equityUnavailable' ? '；胜率暂不可用，继续发一次' : '；等待落后方选择发一次或两次'}`);
     if (!eligibleForTwice) this.decideRunout(1);
+    return true;
   }
 
   nextRunoutDelay(board) { return board.length === 3 ? RUNOUT_TURN_MS : RUNOUT_RIVER_MS; }
@@ -1529,6 +1564,7 @@ export class Room {
   recordFinishedHand() {
     const record = {
       handNo: this.handNo,
+      startedAt: this.hand.startedAt ?? this.hand.fair.utc,
       smallBlind: this.hand.smallBlind, bigBlind: this.hand.bigBlind,
       board: this.hand.board.map(item => cardLabel(item.card)),
       boards: this.hand.result?.boards ?? [this.hand.board.map(item => cardLabel(item.card))],
@@ -1662,7 +1698,8 @@ export class Room {
     const publicRunout = runout ? {
       phase: runout.phase, eligibleForTwice: runout.eligibleForTwice, reason: runout.reason,
       equity: runout.equity, trailingSeat: runout.trailingSeat, leadingSeat: runout.leadingSeat,
-      equityMethod: runout.equityMethod ?? 'exact',
+      equityMethod: runout.equityMethod ??
+        (runout.phase === 'calculating' || runout.reason === 'equityUnavailable' ? null : 'exact'),
       equitySamples: runout.equitySamples ?? null,
       equityErrorPct: runout.equityErrorPct ?? null,
       proposal: runout.proposal, response: runout.response, times: runout.times,
@@ -1711,12 +1748,28 @@ export class Room {
     const canAct = this.status === 'playing' && Number.isInteger(viewer.seat) &&
       Number.isInteger(hand?.actingSeat) && viewer.seat === hand.actingSeat &&
       viewer.hand?.handNo === this.handNo;
+    // Full historical proofs and events remain in the saved history and its
+    // paginated API. Repeating them in every player's live snapshot makes a
+    // busy ten-seat room consume megabytes of bandwidth for a single action.
+    const history = this.history.slice(-5).map(record => ({
+      handNo: record.handNo,
+      startedAt: record.startedAt ?? record.fairness?.utc ?? null,
+      smallBlind: record.smallBlind, bigBlind: record.bigBlind,
+      board: record.board, boards: record.boards,
+      result: record.result, shownHands: record.shownHands,
+      fairness: record.fairness ? {
+        utc: record.fairness.utc,
+        seedCommitment: record.fairness.seedCommitment,
+        deckRoot: record.fairness.deckRoot,
+        visibleCardCount: record.fairness.visibleCardProofs?.length ?? 0
+      } : null
+    }));
     return {
       roomCode: this.code, capacity: this.capacity, seatingCapacity: this.seats.length,
       pendingCapacity: this.pendingCapacity,
       pendingBigBlind: this.pendingBigBlind, tableSettingsNotice: this.tableSettingsNotice,
       status: this.status, handNo: this.handNo,
-      serverTime: Date.now(), nextHandAt: this.nextHandAt,
+      serverTime: Date.now(), stateVersion: this.stateVersion, nextHandAt: this.nextHandAt,
       pause: this.isPaused() ? this.pause : null,
       smallBlind: this.smallBlind, bigBlind: this.bigBlind,
       handSmallBlind: hand?.smallBlind ?? null, handBigBlind: hand?.bigBlind ?? null,
@@ -1767,7 +1820,7 @@ export class Room {
         canEditTableSettings: viewer.seat === null
       },
       spectatorCount: [...this.members.values()].filter(member => member.seat === null && member.connections.size > 0).length,
-      events: this.events.slice(-250), history: this.history.slice(-20),
+      events: this.events.slice(-250), history, historyTotal: this.history.length,
       ledger: this.ledger(), result: hand?.result ?? null,
       fairness: this.publicFairness()
     };
