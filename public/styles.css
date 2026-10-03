@@ -428,3 +428,6 @@ html,body{overflow-x:clip;overscroll-behavior-x:none;touch-action:pan-y}
 }
 .action-panel .action-controls>.action-checkfold{width:100%;min-width:0;justify-self:stretch}
 @media (max-width:360px){html[lang="en"] .action-panel .action-controls>.action-checkfold{font-size:9.5px;letter-spacing:-.04em;padding-inline:1px}}
+
+/* On-demand public records stay bounded to one page. */
+.history-hand{border-top:1px solid #36595a;padding:8px 0}.history-hand>summary{padding:8px 0!important;display:list-item!important;font-size:13px;overflow-wrap:anywhere}.history-hand ul{padding-left:20px;font-size:12px;line-height:1.6;overflow-wrap:anywhere}.history-navigation{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0}.history-navigation button:disabled{opacity:.5}

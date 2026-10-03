@@ -195,6 +195,10 @@ export class Room {
     this.lastHandStartedAt = null;
     this.closedAt = null;
     this.closeReason = null;
+    // Transport ordering is deliberately ephemeral: a restarted room gets a
+    // new epoch, so clients never compare its sequence with the old process.
+    this.stateEpoch = randomUUID();
+    this.stateSequence = 0;
     this.onChange = onChange;
   }
 
@@ -1633,7 +1637,7 @@ export class Room {
     });
   }
 
-  stateFor(token) {
+  stateFor(token, { compact = false } = {}) {
     const viewer = this.requireMember(token);
     const pendingTotals = member => {
       const entries = this.pendingFinancial;
@@ -1711,7 +1715,16 @@ export class Room {
     const canAct = this.status === 'playing' && Number.isInteger(viewer.seat) &&
       Number.isInteger(hand?.actingSeat) && viewer.seat === hand.actingSeat &&
       viewer.hand?.handNo === this.handNo;
+    const fairness = this.publicFairness();
+    const latestRecord = this.history.at(-1);
+    const historyVersion = `${this.history.length}:${latestRecord?.handNo ?? 0}:${latestRecord?.events?.at(-1)?.id ?? 0}:${latestRecord?.fairness?.visibleCardProofs?.length ?? 0}`;
+    const compactFairness = fairness ? {
+      algorithm: fairness.algorithm, utc: fairness.utc,
+      seedCommitment: fairness.seedCommitment, deckRoot: fairness.deckRoot,
+      visibleCardCount: fairness.visibleCardProofs.length, detailsAvailable: true
+    } : null;
     return {
+      stateEpoch: this.stateEpoch, stateSequence: ++this.stateSequence,
       roomCode: this.code, capacity: this.capacity, seatingCapacity: this.seats.length,
       pendingCapacity: this.pendingCapacity,
       pendingBigBlind: this.pendingBigBlind, tableSettingsNotice: this.tableSettingsNotice,
@@ -1767,16 +1780,18 @@ export class Room {
         canEditTableSettings: viewer.seat === null
       },
       spectatorCount: [...this.members.values()].filter(member => member.seat === null && member.connections.size > 0).length,
-      events: this.events.slice(-250), history: this.history.slice(-20),
+      events: this.events.slice(-250),
+      ...(compact ? { compact: true, historyTotal: this.history.length, historyVersion, eventSeq: this.eventSeq }
+        : { history: this.history.slice(-20) }),
       ledger: this.ledger(), result: hand?.result ?? null,
-      fairness: this.publicFairness()
+      fairness: compact ? compactFairness : fairness
     };
   }
 
-  command(token, data) {
+  command(token, data, stateOptions) {
     const member = this.requireMember(token);
     if (!data || typeof data !== 'object' || Array.isArray(data)) throw new GameError('命令格式错误');
-    if (data.type === 'unload' && this.commandReceipt(member, data.requestId, 'unload')) return this.stateFor(token);
+    if (data.type === 'unload' && this.commandReceipt(member, data.requestId, 'unload')) return this.stateFor(token, stateOptions);
     if (this.isPaused()) throw new GameError('礼物展示中，牌局暂时暂停');
     // Resolve the absolute deadline before accepting a late action or switch.
     // A purchased block changes expectedAction.actionDeadline, so stale
@@ -1810,7 +1825,7 @@ export class Room {
       default: throw new GameError('未知命令');
     }
     this.changed();
-    return this.stateFor(token);
+    return this.stateFor(token, stateOptions);
   }
 
   timeoutAction() {
