@@ -580,6 +580,29 @@
     ['{name} 卸码 {amount}', '{name} 卸碼 {amount}', '{name} cashes out {amount}.'],
     ['第 {handNo} 手开始；{name} 持按钮，小盲 {small}，大盲 {big}', '第 {handNo} 手開始；{name} 持按鈕，小盲 {small}，大盲 {big}', 'Hand {handNo} starts; {name} has the button. Blinds {small}/{big}.']
   ];
+  messages.push(
+    ["请求超时，请检查网络。", "請求逾時，請檢查網絡。", "Request timed out. Please check your connection."],
+    ["连接已切换。", "連線已切換。", "The connection has changed."],
+    ["操作结果尚未确认，正在同步牌桌；不会自动重试。", "操作結果尚未確認，正在同步牌桌；不會自動重試。", "The action result is unconfirmed. Syncing the table without retrying the action."],
+    ["正在同步牌桌", "正在同步牌桌", "Syncing table"],
+    ["牌桌已同步，请确认操作结果。", "牌桌已同步，請確認操作結果。", "Table synced. Please check the action result."],
+    ["牌局编号无效", "牌局編號無效", "Invalid hand number."],
+    ["找不到该手的发牌记录", "找不到該手的發牌紀錄", "The dealing record for this hand was not found."],
+    ["心跳参数无效", "心跳參數無效", "Invalid heartbeat."],
+    ["第 {handNo} 手", "第 {handNo} 手", "Hand {handNo}"],
+    ["无公共牌", "無公共牌", "No community cards"],
+    ["复制公开证明", "複製公開證明", "Copy public proofs"],
+    ["正在加载记录…", "正在載入紀錄…", "Loading records…"],
+    ["暂无已结束的牌局。", "暫無已結束的牌局。", "No completed hands yet."],
+    ["更早记录", "更早紀錄", "Older records"],
+    ["较新记录", "較新紀錄", "Newer records"],
+    ["刷新最新记录", "重新載入最新紀錄", "Refresh latest records"],
+    ["正在加载公开证明…", "正在載入公開證明…", "Loading public proofs…"],
+    ["重新加载", "重新載入", "Reload"],
+    ["记录加载失败，请重试。", "紀錄載入失敗，請重試。", "Could not load the records. Please retry."],
+    ["公开证明已复制。", "公開證明已複製。", "Public proofs copied."],
+    ["已结束的牌局", "已結束的牌局", "Completed hands"]
+  );
   for (const [key, traditional, english] of messages) {
     dictionaries['zh-TW'][key] = traditional;
     dictionaries.en[key] = english;

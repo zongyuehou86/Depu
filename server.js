@@ -43,6 +43,10 @@ const transactionIndex = new Map();
 const roomSocketHandlers = new WeakMap();
 // A just-created identity may be joined by a second tab before its first socket opens.
 const pendingWelcomes = new WeakMap();
+const socketViews = new WeakMap();
+const socketHealth = new WeakMap();
+const WS_MAX_BUFFERED_BYTES = 1024 * 1024;
+const WS_HEARTBEAT_MS = 30_000;
 
 // Limit data is keyed by IP, not room. Expired entries are removed even when
 // a previously seen IP never sends another request.
@@ -417,21 +421,44 @@ function holdForRecordFailure(room, error) {
   persist(room);
 }
 
+function sendSocketPacket(socket, packet) {
+  if (socket.readyState !== WebSocket.OPEN) return false;
+  // Do not build an unbounded queue of stale states for a suspended/slow tab.
+  // Reconnecting obtains one authoritative snapshot. A single legacy full
+  // state may exceed the budget; further queued packets may not.
+  if (socket.bufferedAmount > WS_MAX_BUFFERED_BYTES ||
+      (socket.bufferedAmount > 0 && socket.bufferedAmount + Buffer.byteLength(packet) > WS_MAX_BUFFERED_BYTES)) {
+    socket.terminate();
+    return false;
+  }
+  try {
+    socket.send(packet, error => { if (error) socket.terminate(); });
+    return true;
+  } catch {
+    socket.terminate();
+    return false;
+  }
+}
+
 function broadcast(room) {
   if (closeRoomIfInactive(room)) return;
   for (const member of room.members.values()) {
     if (!member.connections.size) continue;
-    let text;
-    try { text = JSON.stringify({ type: 'state', state: room.stateFor(member.token) }); }
-    catch (error) {
-      if (error instanceof GameError && error.errorCode === 'ROOM_CLOSED') {
-        closeRoomIfInactive(room);
-        return;
-      }
-      throw error;
-    }
+    const packets = new Map();
     for (const socket of member.connections) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(text);
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      const compact = socketViews.get(socket) === true;
+      if (!packets.has(compact)) {
+        try { packets.set(compact, JSON.stringify({ type: 'state', state: room.stateFor(member.token, { compact }) })); }
+        catch (error) {
+          if (error instanceof GameError && error.errorCode === 'ROOM_CLOSED') {
+            closeRoomIfInactive(room);
+            return;
+          }
+          throw error;
+        }
+      }
+      sendSocketPacket(socket, packets.get(compact));
     }
   }
 }
@@ -452,7 +479,7 @@ function broadcastEffect(room, effect) {
   const packet = JSON.stringify(effect);
   for (const member of room.members.values()) {
     for (const socket of member.connections) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(packet);
+      sendSocketPacket(socket, packet);
     }
   }
 }
@@ -465,7 +492,7 @@ function broadcastGiftEffect(room, effect) {
   for (const member of room.members.values()) {
     if (visible && !visible.has(member.id)) continue;
     for (const socket of member.connections) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(packet);
+      sendSocketPacket(socket, packet);
     }
   }
 }
@@ -535,7 +562,7 @@ function closeRoomIfInactive(room) {
     const detach = roomSocketHandlers.get(socket);
     if (detach) detach();
     if (socket.readyState !== WebSocket.OPEN) continue;
-    try { socket.send(packet); socket.close(4004, 'ROOM_CLOSED'); }
+    try { if (sendSocketPacket(socket, packet)) socket.close(4004, 'ROOM_CLOSED'); }
     catch (error) {
       console.error(`房间 ${room.code} 关闭连接失败: ${error.message}`);
       socket.terminate();
@@ -646,17 +673,17 @@ function persistFinancialCommand(room) {
   }
 }
 
-function retryFinancialPersistence(room, token) {
+function retryFinancialPersistence(room, token, stateOptions) {
   try { roomChanged(room); }
   catch (error) {
     room.persistenceFault = true;
     scheduleDeadline(room);
     throw new GameError('交易已记录，但房间状态暂时保存失败；请用同一请求编号重试', 503);
   }
-  return { state: room.stateFor(token), duplicate: true };
+  return { state: room.stateFor(token, stateOptions), duplicate: true };
 }
 
-function commandRoom(room, token, data) {
+function commandRoom(room, token, data, stateOptions) {
   ensureActiveRoom(room);
   const member = room.requireMember(token);
   if (room.persistenceFault) {
@@ -664,13 +691,13 @@ function commandRoom(room, token, data) {
     if ((type === 'gift' || type === 'unload' || type === 'rebuy') &&
         (previousPrivateTransaction(room, member, data.requestId, type) ||
           room.commandReceipt(member, data.requestId, type))) {
-      return retryFinancialPersistence(room, token);
+      return retryFinancialPersistence(room, token, stateOptions);
     }
     throw new GameError('房间状态保存暂时失败，请稍后再试', 503);
   }
   if (data?.type === 'gift') {
     if (previousPrivateTransaction(room, member, data.requestId, 'gift')) {
-      return { state: room.stateFor(token), duplicate: true };
+      return { state: room.stateFor(token, stateOptions), duplicate: true };
     }
     const result = room.gift(member, data, transaction => {
       try { writePrivateTransaction(room, transaction); }
@@ -681,12 +708,12 @@ function commandRoom(room, token, data) {
       indexPrivateTransaction(room, member, result.transaction);
       broadcastGiftEffect(room, result.effect);
     }
-    return result.duplicate ? { state: room.stateFor(token), duplicate: true }
-      : { state: room.stateFor(token), effect: result.effect };
+    return result.duplicate ? { state: room.stateFor(token, stateOptions), duplicate: true }
+      : { state: room.stateFor(token, stateOptions), effect: result.effect };
   }
   if (data?.type === 'sneak') {
     if (previousPrivateTransaction(room, member, data.requestId, 'sneak')) {
-      return { state: room.stateFor(token), duplicate: true };
+      return { state: room.stateFor(token, stateOptions), duplicate: true };
     }
     const result = room.sneak(member, data, transaction => writePrivateTransaction(room, transaction));
     if (!result.duplicate) {
@@ -694,12 +721,12 @@ function commandRoom(room, token, data) {
       indexPrivateTransaction(room, member, { type: 'sneak', requestId: data.requestId.toLowerCase() });
       broadcastGiftEffect(room, result.effect);
     }
-    return result.duplicate ? { state: room.stateFor(token), duplicate: true }
-      : { state: room.stateFor(token), effect: result.effect };
+    return result.duplicate ? { state: room.stateFor(token, stateOptions), duplicate: true }
+      : { state: room.stateFor(token, stateOptions), effect: result.effect };
   }
   if (data?.type === 'unload') {
     if (previousPrivateTransaction(room, member, data.requestId, 'unload')) {
-      return { state: room.stateFor(token), duplicate: true };
+      return { state: room.stateFor(token, stateOptions), duplicate: true };
     }
     const result = room.unload(member, data.requestId, transaction => {
       try { writePrivateTransaction(room, transaction); }
@@ -709,11 +736,11 @@ function commandRoom(room, token, data) {
       persistFinancialCommand(room);
       indexPrivateTransaction(room, member, result.transaction);
     }
-    return { state: room.stateFor(token), ...(result.duplicate ? { duplicate: true } : {}) };
+    return { state: room.stateFor(token, stateOptions), ...(result.duplicate ? { duplicate: true } : {}) };
   }
   if (data?.type === 'rebuy') {
     if (previousPrivateTransaction(room, member, data.requestId, 'rebuy')) {
-      return { state: room.stateFor(token), duplicate: true };
+      return { state: room.stateFor(token, stateOptions), duplicate: true };
     }
     if (typeof data.requestId !== 'string') throw new GameError('补码需要有效的请求编号');
     const result = room.rebuy(member, data.amount, data.requestId, transaction => {
@@ -725,9 +752,9 @@ function commandRoom(room, token, data) {
       indexPrivateTransaction(room, member, result.transaction);
       const effect = roomEffect(room, member, 'rebuy');
       broadcastEffect(room, effect);
-      return effect ? { state: room.stateFor(token), effect } : { state: room.stateFor(token) };
+      return effect ? { state: room.stateFor(token, stateOptions), effect } : { state: room.stateFor(token, stateOptions) };
     }
-    return { state: room.stateFor(token), duplicate: true };
+    return { state: room.stateFor(token, stateOptions), duplicate: true };
   }
   if (data?.type === 'nextHand' && room.status === 'finished') {
     try { ensurePrivateHandRecord(room); }
@@ -740,7 +767,7 @@ function commandRoom(room, token, data) {
       roomChanged(room);
     }
   }
-  const state = room.command(token, data);
+  const state = room.command(token, data, stateOptions);
   const trigger = data?.type === 'sit' ? data.type : null;
   const effect = trigger ? roomEffect(room, room.requireMember(token), trigger) : null;
   broadcastEffect(room, effect);
@@ -845,9 +872,10 @@ async function route(request, response) {
     persist(room);
     return sendJSON(response, 201, { roomCode: code });
   }
-  const match = /^\/api\/rooms\/(\d{4,8})\/(join|state|ledger|history|command)$/.exec(url.pathname);
+  const match = /^\/api\/rooms\/(\d{4,8})\/(join|state|ledger|history|fairness|command)$/.exec(url.pathname);
   if (match) {
     const [, code, operation] = match;
+    const stateOptions = { compact: url.searchParams.get('compact') === '1' };
     // Tunnel traffic can share one loopback IP; this limits bursts without capping spectators.
     if (operation === 'join' && request.method === 'POST') rateLimit(request, 'join', 300);
     const hasBody = request.method === 'POST' && (operation === 'join' || operation === 'command');
@@ -865,13 +893,23 @@ async function route(request, response) {
       const fresh = body.token == null;
       const member = room.join(body.nickname, body.token);
       const effect = welcomeOnJoin(room, member, fresh, body.enter === true);
-      return sendJSON(response, 200, { token: member.token, state: room.stateFor(member.token),
+      return sendJSON(response, 200, { token: member.token, state: room.stateFor(member.token, stateOptions),
         ...(effect ? { effect } : {}) });
     }
     const token = tokenFromRequest(request);
     room.requireMember(token);
-    if (operation === 'state' && request.method === 'GET') return sendJSON(response, 200, { state: room.stateFor(token) });
+    if (operation === 'state' && request.method === 'GET') return sendJSON(response, 200, { state: room.stateFor(token, stateOptions) });
     if (operation === 'ledger' && request.method === 'GET') return sendJSON(response, 200, { ledger: room.ledger() });
+    if (operation === 'fairness' && request.method === 'GET') {
+      const handNo = Number(url.searchParams.get('handNo') ?? room.handNo);
+      if (!Number.isSafeInteger(handNo) || handNo < 0) throw new GameError('牌局编号无效');
+      // Use only the same public proofs exposed by the legacy state/history
+      // APIs. Never derive proofs from a viewer's own private hole cards.
+      const record = handNo === room.handNo ? null : room.history.find(item => item.handNo === handNo);
+      if (handNo !== room.handNo && !record) throw new GameError('找不到该手的发牌记录', 404);
+      return sendJSON(response, 200, { handNo,
+        fairness: handNo === room.handNo ? room.publicFairness() : (record.fairness ?? null) });
+    }
     if (operation === 'history' && request.method === 'GET') {
       const offset = Number(url.searchParams.get('offset') ?? 0);
       const limit = Number(url.searchParams.get('limit') ?? 100);
@@ -881,7 +919,7 @@ async function route(request, response) {
       return sendJSON(response, 200, { total: room.history.length, items: room.history.slice(offset, offset + limit) });
     }
     if (operation === 'command' && request.method === 'POST') {
-      return sendJSON(response, 200, commandRoom(room, token, body));
+      return sendJSON(response, 200, commandRoom(room, token, body, stateOptions));
     }
     throw new GameError('不支持此请求', 405);
   }
@@ -901,6 +939,20 @@ const server = http.createServer((request, response) => {
 });
 
 const webSockets = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024, perMessageDeflate: false });
+const heartbeat = setInterval(() => {
+  for (const socket of webSockets.clients) {
+    const health = socketHealth.get(socket);
+    if (!health || socket.readyState !== WebSocket.OPEN) continue;
+    if (health.awaitingPong || socket.bufferedAmount > WS_MAX_BUFFERED_BYTES) {
+      socket.terminate();
+      continue;
+    }
+    health.awaitingPong = true;
+    try { socket.ping(); } catch { socket.terminate(); }
+  }
+}, WS_HEARTBEAT_MS);
+heartbeat.unref();
+server.on('close', () => clearInterval(heartbeat));
 server.on('upgrade', (request, socket, head) => {
   try {
     if (!originAllowed(request)) throw new GameError('不允许跨站连接', 403);
@@ -913,20 +965,33 @@ server.on('upgrade', (request, socket, head) => {
     webSockets.handleUpgrade(request, socket, head, ws => {
       if (closeRoomIfInactive(room)) {
         ws.on('error', detachedSocketError);
-        ws.send(JSON.stringify({ type: 'roomClosed', roomCode: room.code,
+        sendSocketPacket(ws, JSON.stringify({ type: 'roomClosed', roomCode: room.code,
           reason: 'inactive', message: ROOM_CLOSED_MESSAGE }));
         ws.close(4004, 'ROOM_CLOSED');
         return;
       }
       member.connections.add(ws);
+      const stateOptions = { compact: url.searchParams.get('compact') === '1' };
+      socketViews.set(ws, stateOptions.compact);
+      const health = { awaitingPong: false };
+      socketHealth.set(ws, health);
       pendingWelcomes.delete(member);
+      const onPong = () => { health.awaitingPong = false; };
       const onMessage = message => {
         try {
           if (closeRoomIfInactive(room)) return;
           const data = JSON.parse(String(message));
-          commandRoom(room, token, data);
+          if (data?.type === 'ping') {
+            if (typeof data.nonce !== 'string' || data.nonce.length > 128) throw new GameError('心跳参数无效');
+            sendSocketPacket(ws, JSON.stringify({ type: 'pong', nonce: data.nonce, serverTime: Date.now() }));
+            return;
+          }
+          // Heartbeat messages are transport-only and cannot mutate a room or
+          // enter command validation, even if a peer sends unsolicited pong.
+          if (data?.type === 'pong') return;
+          commandRoom(room, token, data, stateOptions);
         } catch (error) {
-          if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'error', message: error.message || '命令失败' }));
+          sendSocketPacket(ws, JSON.stringify({ type: 'error', message: error.message || '命令失败' }));
         }
       };
       const onClose = () => {
@@ -942,13 +1007,17 @@ server.on('upgrade', (request, socket, head) => {
       const detach = () => {
         if (!roomSocketHandlers.has(ws)) return;
         roomSocketHandlers.delete(ws);
+        socketViews.delete(ws);
+        socketHealth.delete(ws);
         ws.off('message', onMessage);
+        ws.off('pong', onPong);
         ws.off('close', onClose);
         ws.off('error', onError);
         ws.on('error', detachedSocketError);
       };
       roomSocketHandlers.set(ws, detach);
       ws.on('message', onMessage);
+      ws.on('pong', onPong);
       ws.on('close', onClose);
       ws.on('error', onError);
       broadcast(room);

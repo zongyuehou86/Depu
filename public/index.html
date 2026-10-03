@@ -14,6 +14,7 @@
   <script src="/chip-display.js" defer></script>
   <script src="/preactions.js" defer></script>
   <script src="/viewport-guard.js" defer></script>
+  <script src="/details.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -60,7 +61,8 @@
 
           <aside class="sidebar">
             <details id="ledger-details" class="panel ledger-panel"><summary><span><span class="eyebrow" data-i18n="按需查看">按需查看</span><strong data-i18n="补码与总盈亏">补码与总盈亏</strong></span><span class="disclosure" aria-hidden="true">⌄</span></summary><div id="ledger-content" class="ledger-content"></div></details>
-            <details id="fairness-details" class="panel ledger-panel"><summary><span><span class="eyebrow" data-i18n="发牌公开记录">发牌公开记录</span><strong data-i18n="随机牌堆信息">随机牌堆信息</strong></span><span class="disclosure" aria-hidden="true">⌄</span></summary><div id="fairness-content" class="ledger-content"></div></details>
+            <details id="fairness-details" class="panel ledger-panel"><summary><span><span class="eyebrow" data-i18n="发牌公开记录">发牌公开记录</span><strong data-i18n="随机牌堆信息">随机牌堆信息</strong></span><span class="disclosure" aria-hidden="true">⌄</span></summary><div id="fairness-content" class="ledger-content"></div><div id="fairness-proof-content" class="ledger-content"></div></details>
+            <details id="history-details" class="panel ledger-panel"><summary><span><span class="eyebrow" data-i18n="按需查看">按需查看</span><strong data-i18n="已结束的牌局">已结束的牌局</strong></span><span class="disclosure" aria-hidden="true">⌄</span></summary><div id="history-content" class="ledger-content"></div></details>
           </aside>
         </div>
       </section>
