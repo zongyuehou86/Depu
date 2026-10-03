@@ -46,7 +46,7 @@ const players = Array.from({ length: 10 }, (_, seat) => ({ seat, nickname: `Load
   token: '', socket: null, state: null, receipts: new Map() }));
 const connections = [];
 const metrics = { commands: [], broadcasts: [], stateBytes: [], health: [], totalWsBytes: 0,
-  stateMessages: 0, privacyChecks: 0, conservationChecks: 0, reconnects: 0 };
+  stateMessages: 0, privacyChecks: 0, conservationChecks: 0, reconnects: 0, setupWarmupHands: 0 };
 let roomCode = '', child, tempRoot, fatal, phase = 'setup', healthRunning = false, healthTask;
 let workerStartedAt = null, workerCompletedAt = null, runoutFinishedAt = null;
 const startedAt = performance.now();
@@ -84,7 +84,11 @@ async function request(method, suffix, body, player, timeoutMs = 8000) {
         ...(player?.token ? { Authorization: `Bearer ${player.token}` } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body) });
     const data = await response.json();
-    if (!response.ok) throw new Error(`HTTP ${response.status}: ${data.message || data.error || 'request failed'}`);
+    if (!response.ok) {
+      const error = new Error(`HTTP ${response.status}: ${data.message || data.error || 'request failed'}`);
+      error.status = response.status;
+      throw error;
+    }
     return data;
   } finally { clearTimeout(timer); }
 }
@@ -214,6 +218,51 @@ function latestState() {
     .reduce((latest, state) => !latest || state.stateVersion > latest.stateVersion ? state : latest, null);
 }
 
+async function startTenPlayerHand() {
+  // Returning sequentially over a high-latency connection can consume the
+  // entire five-second auto-start window after the second player returns.
+  await Promise.all(players.map(player => command(player, { type: 'return' }, false)));
+  const readState = async () => {
+    const { state } = await request('GET', `/api/rooms/${roomCode}/state`, undefined, players[0]);
+    validateState(state);
+    await synchronized(state.stateVersion);
+    return state;
+  };
+  let state = await readState();
+  if (state.status !== 'playing') {
+    try { state = await command(players[0], { type: 'nextHand' }, false); }
+    catch (error) {
+      // The timer can start the hand between the state read and this command.
+      if (error.status !== 400 || !error.message.includes('这一手尚未结束')) throw error;
+      state = await readState();
+      assert.equal(state.status, 'playing', 'An already-started response must refer to a real running hand');
+    }
+  }
+  const participants = state.seats.filter(seat => seat?.inHand).length;
+  if (participants < 10) {
+    // An unusually delayed return can still arrive after auto-start. Finish
+    // this synthetic warm-up hand; all 10 have now returned for the next hand.
+    metrics.setupWarmupHands++;
+    console.log(JSON.stringify({ progress: 'setup-warmup', roomCode, participants }));
+    let folds = 0;
+    while (state.status === 'playing') {
+      assert.equal(state.runout, null, 'A setup-only hand cannot already be all-in');
+      const player = players[state.actingSeat];
+      assert.ok(player, 'The warm-up actor must be a synthetic player');
+      await synchronized(state.stateVersion);
+      state = await command(player, { type: 'action', action: 'fold',
+        expectedAction: actionGuard(player.state) }, false);
+      assert.ok(++folds <= 10, 'A setup warm-up hand settles within 10 folds');
+    }
+    state = await waitUntil(() => {
+      const current = latestState();
+      return current?.status === 'playing' && current.seats.filter(seat => seat?.inHand).length === 10
+        ? current : false;
+    }, 10_000, 'all 10 players in the first measured hand');
+  }
+  assert.equal(state.seats.filter(seat => seat?.inHand).length, 10, 'Measured load starts only with all 10 participants');
+}
+
 async function playHand(allIn = false) {
   let state = await waitUntil(() => {
     const latest = latestState();
@@ -327,8 +376,7 @@ try {
     await command(player, { type: 'sit', seat: player.seat, buyIn: 2000 }, false);
     await command(player, { type: 'sitOut' }, false);
   }
-  for (const player of players) await command(player, { type: 'return' }, false);
-  await command(players[0], { type: 'nextHand' }, false);
+  await startTenPlayerHand();
   phase = 'normal';
   let normalActions = 0;
   for (let index = 0; index < hands; index++) {
@@ -364,7 +412,7 @@ try {
   healthRunning = false;
   await healthTask;
   console.log(JSON.stringify({ result: 'PASS', players: 10, normalHands: hands, normalActions,
-    allInActions: allIn.actions, reconnects: metrics.reconnects,
+    allInActions: allIn.actions, reconnects: metrics.reconnects, setupWarmupHands: metrics.setupWarmupHands,
     elapsedSeconds: round((performance.now() - startedAt) / 1000),
     commandMs: distribution(metrics.commands.map(row => row.ms)),
     normalCommandMs: distribution(metrics.commands.filter(row => row.phase === 'normal').map(row => row.ms)),
@@ -380,7 +428,7 @@ try {
 } catch (error) {
   let message = error.message;
   for (const player of players) if (player.token) message = message.replaceAll(player.token, '[redacted]');
-  console.error(JSON.stringify({ result: 'FAIL', message }));
+  console.error(JSON.stringify({ result: 'FAIL', phase, roomCode, message }));
   process.exitCode = 1;
 } finally {
   healthRunning = false;
