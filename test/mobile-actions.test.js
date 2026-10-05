@@ -148,3 +148,18 @@ test('phone CSS keeps text inputs at 16px and viewport guard blocks only pinch g
   listeners.get('gesturechange')(event([]));
   assert.equal(prevented, 3, 'two-finger pinch and Safari gestures are blocked');
 });
+
+test('tapping offturn Call queues locally, second tap cancels, and check/fold replaces it', () => {
+  const h = clickHarness(table({ currentBet: 100, streetCommit: 20 }));
+  h.press({ preaction: 'call', action: 'call' });
+  assert.equal(h.preactions.getSelected(), 'call');
+  assert.deepEqual(h.commands, []);
+  h.press({ preaction: 'call', action: 'call' });
+  assert.equal(h.preactions.getSelected(), null);
+  h.press({ preaction: 'call', action: 'call' });
+  h.press({ preaction: 'checkFold' });
+  assert.equal(h.preactions.getSelected(), 'checkFold');
+  assert.deepEqual(h.commands, []);
+  assert.match(renderedControls(table({ currentBet: 100, streetCommit: 20 }), 'bb'),
+    /data-preaction="call" aria-pressed="false"[^>]*>跟注 4 BB<\/button>/);
+});

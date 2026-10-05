@@ -14,8 +14,8 @@ function readyRoom(count = 2) {
   return { room, players };
 }
 
-test('30-second free clock buys a 10-second block without altering betting or blind commitments', () => {
-  assert.equal(ACTION_TIME_MS, 30_000);
+test('35-second free clock buys a 10-second block without altering betting or blind commitments', () => {
+  assert.equal(ACTION_TIME_MS, 35_000);
   assert.equal(TIMEBANK_BLOCK_MS, 10_000);
   assert.equal(TIMEBANK_BLOCK_COST, 10);
   const { room, players: [smallBlind, bigBlind] } = readyRoom();

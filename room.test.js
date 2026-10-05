@@ -224,7 +224,7 @@ test('expired action deadline automatically folds when facing a bet', () => {
 
 test('temporary leave folds an active hand, skips its turn and pauses automatic start until two return', () => {
   const { room, members } = roomWithPlayers(3);
-  assert.equal(ACTION_TIME_MS, 30_000);
+  assert.equal(ACTION_TIME_MS, 35_000);
   assert.equal(NEXT_HAND_DELAY_MS, 5_000);
   room.command(members[0].token, { type: 'nextHand' });
   assert.equal(room.hand.actingSeat, 0);
@@ -260,7 +260,8 @@ test('a player cannot reveal a previous folded hand after the next hand begins',
   assert.equal(previousCards.length, 2);
   assert.equal(room.history[0].shownHands.length, 0);
   assert.equal(watching.seats[0].shownCards, null);
-  assert.equal(watching.history[0].fairness.visibleCardProofs.length, 0);
+  assert.equal(watching.history[0].fairness.visibleCardCount, 0);
+  assert.equal(room.history[0].fairness.visibleCardProofs.length, 0);
   assert.deepEqual(room.stateFor(members[0].token).hero.revealableHands, []);
 });
 

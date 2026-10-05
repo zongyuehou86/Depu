@@ -118,7 +118,7 @@ test('runout vote deadline and staged card timer survive process restart without
       return (await response.json()).state;
     };
     await launch();
-    let view = await state();
+    let view = await waitUntil(state, value => value.runout?.phase !== 'calculating');
     assert.equal(view.runout.phase, 'trailingVote');
     assert.equal(view.runout.deadline, originalDeadline);
     assert.equal(view.fairness.deckRoot, deckRoot);
@@ -157,6 +157,65 @@ test('runout vote deadline and staged card timer survive process restart without
     assert.equal(view.runout.boards[0][3], turn);
     assert.ok(view.runout.nextCardAt >= Date.now() + 9_000);
     assert.equal(view.fairness.deckRoot, deckRoot);
+  });
+
+test('a recovered equity calculation completes asynchronously before its fresh runout timer starts',
+  { timeout: 10_000 }, async t => {
+    const port = await freePort();
+    const dataDir = mkdtempSync(path.join(os.tmpdir(), 'poker-runout-equity-data-'));
+    const recordsDir = mkdtempSync(path.join(os.tmpdir(), 'poker-runout-equity-records-'));
+    let child;
+    t.after(async () => {
+      await stopServer(child);
+      rmSync(dataDir, { recursive: true, force: true });
+      rmSync(recordsDir, { recursive: true, force: true });
+    });
+    const room = new Room('456784', 4, () => {}, { deferEquity: true });
+    const a = room.join('甲'), b = room.join('乙'), observer = room.join('观战者');
+    room.command(a.token, { type: 'sit', seat: 0, buyIn: 100 });
+    room.command(b.token, { type: 'sit', seat: 1, buyIn: 100 });
+    room.command(a.token, { type: 'nextHand' });
+    room.command(a.token, { type: 'action', action: 'raise', amount: 100 });
+    room.command(b.token, { type: 'action', action: 'call' });
+    assert.equal(room.hand.runout.phase, 'calculating');
+    assert.equal(room.hand.runout.deadline, null);
+    assert.equal(room.hand.runout.nextCardAt, null);
+    const snapshotPath = path.join(dataDir, `${room.code}.json`);
+    writeFileSync(snapshotPath, JSON.stringify(room.toJSON()));
+    const turn = cardLabel(room.hand.fair.deck[9]);
+    const river = cardLabel(room.hand.fair.deck[11]);
+    child = spawn(process.execPath, ['server.js'], {
+      cwd: root, env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), DATA_DIR: dataDir,
+        HAND_RECORDS_DIR: recordsDir }, stdio: 'ignore'
+    });
+    await waitForServer(port, child);
+    const state = async () => {
+      const response = await fetch(`http://127.0.0.1:${port}/api/rooms/${room.code}/state`, {
+        headers: { Authorization: `Bearer ${observer.token}` }
+      });
+      assert.equal(response.status, 200);
+      return (await response.json()).state;
+    };
+    const view = await waitUntil(state, value => value.runout?.phase !== 'calculating');
+    assert.equal(view.runout.equityMethod, 'monteCarlo');
+    assert.equal(view.runout.equitySamples, 20_000);
+    assert.equal(view.runout.equity.length, 2);
+    assert.ok(view.stateVersion > room.stateVersion);
+    assert.equal(view.fairness.deckRoot, room.hand.fair.deckRoot);
+    assert.ok(!JSON.stringify(view).includes(`"${turn}"`));
+    assert.ok(!JSON.stringify(view).includes(`"${river}"`));
+    if (view.runout.phase === 'trailingVote') {
+      assert.equal(view.board.length, 0);
+      assert.ok(view.runout.deadline >= Date.now() + 14_000);
+    } else {
+      assert.equal(view.runout.phase, 'dealing');
+      assert.equal(view.runout.reason, 'equityTie');
+      assert.equal(view.runout.times, 1);
+      assert.ok(view.runout.nextCardAt >= Date.now() + 4000);
+    }
+    const saved = JSON.parse(readFileSync(snapshotPath, 'utf8'));
+    assert.equal(saved.hand.runout.phase, view.runout.phase);
+    assert.equal(saved.stateVersion, view.stateVersion);
   });
 
 test('first-board pause survives restart and never publishes the second-board turn early',

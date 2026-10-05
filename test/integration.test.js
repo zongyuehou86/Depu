@@ -209,8 +209,7 @@ test('HTTP/WS privacy, rebuy, voluntary reveal and restart recovery', { timeout:
   assert.equal(revealed.history.at(-1).shownHands.length, 1);
 
   const stackBefore = revealed.seats[0].stack;
-  assert.ok(revealed.nextHandAt >= Date.now() + 3500);
-  assert.ok(revealed.nextHandAt <= Date.now() + 5500);
+  assert.equal(revealed.nextHandAt, ended.nextHandAt + 5000);
   assert.equal((await request('POST', `/api/rooms/${code}/command`, { type: 'nextHand' }, a)).status, 400);
   const scheduledAt = revealed.nextHandAt;
   await stopServer(child);
@@ -218,7 +217,7 @@ test('HTTP/WS privacy, rebuy, voluntary reveal and restart recovery', { timeout:
   await startServer();
   assert.equal(readFileSync(recordPath, 'utf8'), privateRecord);
   assert.equal((await state(code, a)).nextHandAt, scheduledAt);
-  const second = await waitUntil(() => state(code, a), value => value.handNo === revealed.handNo + 1);
+  const second = await waitUntil(() => state(code, a), value => value.handNo === revealed.handNo + 1, 12_000);
   assert.equal(second.status, 'playing');
   assert.equal(second.seats[0].pendingRebuy, 0);
   assert.equal(second.seats[0].rebuyCount, 1);

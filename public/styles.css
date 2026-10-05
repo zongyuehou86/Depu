@@ -338,7 +338,7 @@ html[lang="en"] .gift-sneak h3{font-size:15px;line-height:1.25}
 .action-controls .action-allin{color:#d9bbfc;border-color:#aa86d3}
 .action-controls .button:disabled,.action-controls .size-button:disabled{background:transparent;opacity:.38;box-shadow:none}
 .action-controls .action-fold[aria-pressed="true"],.action-controls .action-fold[aria-pressed="true"]:hover{background:#a13e35;color:#fff3ee;border-color:#ffad9b;opacity:1}
-.action-controls .action-check[aria-pressed="true"],.action-controls .action-check[aria-pressed="true"]:hover{background:#197454;color:#f0fff7;border-color:#94efbf;opacity:1}
+.action-controls .action-call[aria-pressed="true"],.action-controls .action-call[aria-pressed="true"]:hover,.action-controls .action-check[aria-pressed="true"],.action-controls .action-check[aria-pressed="true"]:hover{background:#197454;color:#f0fff7;border-color:#94efbf;opacity:1}
 .action-controls .amount-input:disabled{opacity:.38}
 .action-panel .action-meta{min-height:18px}
 @media (hover:hover){.action-controls .button:hover:not(:disabled):not([aria-pressed="true"]),.action-controls .size-button:hover:not(:disabled):not([aria-pressed="true"]){background:#ffffff0c}}

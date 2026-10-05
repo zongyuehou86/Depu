@@ -5,10 +5,13 @@ export const SMALL_BLIND = 10;
 export const BIG_BLIND = 20;
 export const MAX_BIG_BLIND = 1_000_000;
 export const DEFAULT_BUY_IN = 2000;
-export const ACTION_TIME_MS = 30_000;
+export const ACTION_TIME_MS = 35_000;
+export const ACTION_DISPLAY_TIME_MS = 30_000;
+export const ACTION_GRACE_MS = ACTION_TIME_MS - ACTION_DISPLAY_TIME_MS;
 export const TIMEBANK_BLOCK_MS = 10_000;
 export const TIMEBANK_BLOCK_COST = 10;
 export const NEXT_HAND_DELAY_MS = 5_000;
+export const VOLUNTARY_REVEAL_DELAY_MS = 5_000;
 export const RUNOUT_VOTE_MS = 15_000;
 export const RUNOUT_TURN_MS = 5_000;
 export const RUNOUT_RIVER_MS = 10_000;
@@ -167,7 +170,7 @@ export function bigBlindValue(value) {
 }
 
 export class Room {
-  constructor(code, capacity = 4, onChange = () => {}) {
+  constructor(code, capacity = 4, onChange = () => {}, options = {}) {
     this.code = code;
     this.capacity = capacityValue(capacity);
     this.bigBlind = BIG_BLIND;
@@ -185,6 +188,7 @@ export class Room {
     this.events = [];
     this.history = [];
     this.eventSeq = 0;
+    this.stateVersion = 0;
     this.transactionSeq = 0;
     this.commandReceipts = [];
     this.pendingFinancial = [];
@@ -196,6 +200,7 @@ export class Room {
     this.closedAt = null;
     this.closeReason = null;
     this.onChange = onChange;
+    this.deferEquity = options.deferEquity === true;
   }
 
   static expiryInfoFromJSON(data) {
@@ -205,13 +210,14 @@ export class Room {
       expiryAt: Date.parse(lastHandStartedAt ?? createdAt) + ROOM_IDLE_MS };
   }
 
-  static fromJSON(data, onChange = () => {}) {
-    const room = new Room(data.code, data.capacity, onChange);
+  static fromJSON(data, onChange = () => {}, options = {}) {
+    const room = new Room(data.code, data.capacity, onChange, options);
     room.bigBlind = bigBlindValue(data.bigBlind ?? BIG_BLIND);
     room.smallBlind = Math.max(1, Math.floor(room.bigBlind / 2));
     room.pendingBigBlind = data.pendingBigBlind == null ? null : bigBlindValue(data.pendingBigBlind);
     room.pendingCapacity = data.pendingCapacity == null ? null : capacityValue(data.pendingCapacity);
     room.tableSettingsNotice = data.tableSettingsNotice ?? null;
+    room.stateVersion = Number.isSafeInteger(data.stateVersion) && data.stateVersion >= 0 ? data.stateVersion : 0;
     const expiry = Room.expiryInfoFromJSON(data);
     room.createdAt = expiry.createdAt;
     room.lastHandStartedAt = expiry.lastHandStartedAt;
@@ -243,6 +249,7 @@ export class Room {
     room.handNo = data.handNo;
     room.hand = data.hand;
     if (room.hand) {
+      room.hand.voluntaryRevealHandled = room.hand.voluntaryRevealHandled === true;
       // Hands begun before configurable blinds existed always used 10/20.
       room.hand.smallBlind ??= SMALL_BLIND;
       room.hand.bigBlind ??= BIG_BLIND;
@@ -288,14 +295,21 @@ export class Room {
           member.sittingOut && member.hand?.handNo !== room.handNo ? room.handNo : null;
       }
     }
-    if (room.status === 'playing' && room.hand && room.hand.timerVersion !== 3) {
-      if (room.hand.timerVersion === 2 && Number.isFinite(room.hand.actionDeadline)) {
-        room.hand.actionDeadline += ACTION_TIME_MS - 25_000;
-      } else if (Number.isInteger(room.hand.actingSeat)) {
-        room.hand.actionDeadline = Math.min(room.hand.actionDeadline ?? Date.now() + ACTION_TIME_MS,
-          Date.now() + ACTION_TIME_MS);
+    if (room.status === 'playing' && room.hand && room.hand.timerVersion !== 4 &&
+        Number.isInteger(room.hand.actingSeat) && !room.hand.runout) {
+      // Upgrade the existing free window exactly once. Purchased ten-second
+      // blocks and runout timers never gain a free-window grace period.
+      if (!(room.hand.actionTimebankBlocks > 0)) {
+        const previousFreeMs = room.hand.timerVersion === 3 ? 30_000 :
+          room.hand.timerVersion === 2 ? 25_000 : null;
+        if (previousFreeMs && Number.isFinite(room.hand.actionDeadline)) {
+          room.hand.actionDeadline += ACTION_TIME_MS - previousFreeMs;
+        } else {
+          room.hand.actionDeadline = Math.min(room.hand.actionDeadline ?? Date.now() + ACTION_TIME_MS,
+            Date.now() + ACTION_TIME_MS);
+        }
       }
-      room.hand.timerVersion = 3;
+      room.hand.timerVersion = 4;
     }
     if (!room.closedAt && !room.isExpired() && room.status === 'finished' && room.hand) {
       room.prepareRevealables();
@@ -316,7 +330,8 @@ export class Room {
       members: [...this.members.values()].map(({ connections, ...member }) => member),
       seats: this.seats, status: this.status, handNo: this.handNo, hand: this.hand,
       nextHandAt: this.nextHandAt,
-      events: this.events, history: this.history, eventSeq: this.eventSeq, createdAt: this.createdAt,
+      events: this.events, history: this.history, eventSeq: this.eventSeq,
+      stateVersion: this.stateVersion, createdAt: this.createdAt,
       lastHandStartedAt: this.lastHandStartedAt, closedAt: this.closedAt, closeReason: this.closeReason,
       transactionSeq: this.transactionSeq, commandReceipts: this.commandReceipts,
       pendingFinancial: this.pendingFinancial,
@@ -325,7 +340,11 @@ export class Room {
     };
   }
 
-  changed() { this.reconcileAutoStart(); this.onChange(this); }
+  changed({ reconcileAutoStart = true } = {}) {
+    if (reconcileAutoStart) this.reconcileAutoStart();
+    this.stateVersion++;
+    this.onChange(this);
+  }
   expiryAt() { return Date.parse(this.lastHandStartedAt ?? this.createdAt) + ROOM_IDLE_MS; }
   isExpired(now = Date.now()) { return !this.closedAt && now >= this.expiryAt(); }
   assertOpen(now = Date.now()) {
@@ -1049,6 +1068,7 @@ export class Room {
 
   startRunout() {
     if (this.hand.runout || this.livePlayers().length < 2 || this.hand.board.length >= 5) return;
+    this.returnUncalledFoldedBet();
     const initialStreet = this.hand.street;
     const sharedBoard = [...this.hand.board];
     this.setActor(null);
@@ -1060,13 +1080,40 @@ export class Room {
       player.hand.timebankEnabled = false;
     }
     for (const player of this.livePlayers()) player.hand.shown = true;
-    const players = this.livePlayers().map(player => ({
-      seat: player.seat, hole: player.hand.hole.map(item => item.card)
-    }));
-    const { equity, scores, method, scenarios, errorPct } =
-      calculateShowdownEquity(players, this.hand.board.map(item => item.card));
+    this.hand.runout = {
+      phase: 'calculating', eligibleForTwice: false, reason: null,
+      equity: [], equityMethod: null, equitySamples: null, equityErrorPct: null,
+      trailingSeat: null, leadingSeat: null, proposal: null, response: null,
+      times: null, deadline: null, nextCardAt: null,
+      boardIndex: 0, initialStreet, sharedBoard, secondBoard: null,
+      boardResults: []
+    };
+    if (!this.deferEquity) {
+      const { players, board } = this.runoutEquityInput();
+      this.completeRunoutEquity(calculateShowdownEquity(players, board));
+    }
+  }
+
+  runoutEquityInput() {
+    if (this.status !== 'playing' || this.hand?.runout?.phase !== 'calculating') return null;
+    return {
+      players: this.livePlayers().map(player => ({
+        seat: player.seat, hole: player.hand.hole.map(item => item.card)
+      })),
+      board: this.hand.runout.sharedBoard.map(item => item.card)
+    };
+  }
+
+  // The caller publishes/persists the completed calculation with changed().
+  // This also lets the synchronous command path publish only its final state.
+  completeRunoutEquity(calculation) {
+    const input = this.runoutEquityInput();
+    if (!input) return false;
+    const { equity = [], scores = [], method = null, scenarios = null, errorPct = null } = calculation ?? {};
+    const players = input.players;
     let trailingSeat = null, leadingSeat = null, reason = null;
-    if (players.length > 2) reason = 'multiway';
+    if (!calculation) reason = 'equityUnavailable';
+    else if (players.length > 2) reason = 'multiway';
     else if (Math.abs(scores[0].share - scores[1].share) < 1e-9) reason = 'equityTie';
     else {
       const leading = scores[0].share > scores[1].share ? 0 : 1;
@@ -1074,19 +1121,19 @@ export class Room {
       trailingSeat = scores[1 - leading].seat;
     }
     const eligibleForTwice = reason === null;
-    this.hand.runout = {
+    Object.assign(this.hand.runout, {
       phase: eligibleForTwice ? 'trailingVote' : 'dealing', eligibleForTwice, reason,
       equity, equityMethod: method, equitySamples: scenarios, equityErrorPct: errorPct,
       trailingSeat, leadingSeat, proposal: null, response: null,
       times: eligibleForTwice ? null : 1,
       deadline: eligibleForTwice ? this.timerBase() + RUNOUT_VOTE_MS : null,
-      nextCardAt: null,
-      boardIndex: 0, initialStreet, sharedBoard, secondBoard: null,
-      boardResults: []
-    };
+      nextCardAt: null
+    });
     this.addEvent(`无人可继续下注，底牌公开并进入跑马${reason === 'multiway' ? '；超过两名玩家，仅发一次' :
-      reason === 'equityTie' ? '；双方胜率相同，仅发一次' : '；等待落后方选择发一次或两次'}`);
+      reason === 'equityTie' ? '；双方胜率相同，仅发一次' :
+      reason === 'equityUnavailable' ? '；胜率暂不可用，继续发一次' : '；等待落后方选择发一次或两次'}`);
     if (!eligibleForTwice) this.decideRunout(1);
+    return true;
   }
 
   nextRunoutDelay(board) { return board.length === 3 ? RUNOUT_TURN_MS : RUNOUT_RIVER_MS; }
@@ -1099,6 +1146,12 @@ export class Room {
     runout.boardIndex = 0;
     runout.secondBoard = times === 2 ? [...runout.sharedBoard] : null;
     runout.boardResults = [];
+    if (this.hand.board.length === 0 && this.isPaused()) {
+      // An async equity result may arrive during a grand gift. Persist the
+      // decision, but leave the committed flop untouched until the pause ends.
+      runout.nextCardAt = this.pause.endAt;
+      return;
+    }
     if (this.hand.board.length === 0) {
       this.hand.street = 1;
       this.draw(); // First-board flop is drawn only after the vote resolves.
@@ -1150,7 +1203,15 @@ export class Room {
     const runout = this.hand?.runout;
     const dueAt = this.runoutDeadline();
     if (!runout || !Number.isFinite(dueAt) || Date.now() < dueAt) return false;
-    if (runout.phase === 'trailingVote') {
+    // An in-flight runout restored from the previous release may not yet have
+    // returned its folded bettor's excess. Normalize before preview payouts,
+    // so a first-board result cannot promise more than the final settlement.
+    this.returnUncalledFoldedBet();
+    if (runout.phase === 'dealing' && runout.boardIndex === 0 && this.hand.board.length === 0) {
+      // This also resumes a pending flop restored after the gift expired while
+      // offline. Start the full turn delay from the actual reveal, never catch up.
+      this.decideRunout(runout.times);
+    } else if (runout.phase === 'trailingVote') {
       const member = this.seatMember(runout.trailingSeat);
       runout.proposal = 1;
       this.recordAction(member, 'runoutChoice', 0, 1, 'timeout', 'runout');
@@ -1226,7 +1287,7 @@ export class Room {
       dealerSeat, smallBlindSeat, bigBlindSeat, actingSeat: null, actionDeadline: null,
       smallBlind, bigBlind,
       actionTimebankBlocks: 0, currentBet: bigBlind, lastFullRaise: bigBlind,
-      result: null, timerVersion: 3
+      result: null, timerVersion: 4, voluntaryRevealHandled: false
     };
     this.status = 'playing';
     this.nextHandAt = null;
@@ -1390,6 +1451,7 @@ export class Room {
   }
 
   finishByFold() {
+    this.returnUncalledFoldedBet();
     const winner = this.livePlayers()[0];
     const amount = this.pot();
     winner.stack += amount;
@@ -1412,17 +1474,49 @@ export class Room {
     for (const member of this.members.values()) member.giftLocked = 0;
   }
 
+  returnUncalledFoldedBet() {
+    // Sitting out can fold a bettor out of turn before shorter stacks call.
+    // Only the unique, unmatched excess is refundable. Matched chips remain
+    // forfeited when a hand folds; never refund them from an abandoned side pot.
+    const players = this.handPlayers().sort((a, b) => b.hand.totalCommit - a.hand.totalCommit);
+    const player = players[0];
+    if (!player?.hand.folded || players.length < 2) return 0;
+    // Preserve the existing rule that a posted blind is forfeited on a fold.
+    // Refund only voluntary betting above both the matched amount and that
+    // forced contribution, rather than turning sit-out into a blind rebate.
+    const seat = player.hand.seat ?? player.seat;
+    const blind = seat === this.hand.bigBlindSeat ? this.hand.bigBlind :
+      seat === this.hand.smallBlindSeat ? this.hand.smallBlind : 0;
+    const amount = player.hand.totalCommit - Math.max(players[1].hand.totalCommit, blind);
+    if (amount <= 0) return 0;
+    player.stack += amount;
+    player.hand.totalCommit -= amount;
+    player.hand.streetCommit -= Math.min(amount, player.hand.streetCommit);
+    this.recordAction(player, 'uncalledReturn', amount, null, 'system', 'refund');
+    this.addEvent(`${player.nickname} 退回无人跟注的 ${amount} 筹码`, player.seat);
+    return amount;
+  }
+
   buildPots() {
     const players = this.handPlayers();
     const levels = [...new Set(players.map(player => player.hand.totalCommit).filter(Boolean))].sort((a, b) => a - b);
     let previous = 0;
-    const pots = levels.map(level => {
+    const pots = [];
+    for (const level of levels) {
       const contributors = players.filter(player => player.hand.totalCommit >= level);
       const pot = { amount: (level - previous) * contributors.length,
         eligibleSeats: contributors.filter(player => !player.hand.folded).map(player => player.seat) };
       previous = level;
-      return pot;
-    });
+      if (pot.eligibleSeats.length) pots.push(pot);
+      else {
+        // Out-of-turn folds can leave a matched side pot with no live hand.
+        // That dead money goes to the nearest lower eligible pot, not back to
+        // folded players and not to an empty set of showdown winners.
+        const lower = pots.at(-1);
+        if (!lower) throw new Error('底池没有符合条件的玩家');
+        lower.amount += pot.amount;
+      }
+    }
     // Timebank fees are dead money in the main pot: they are not a wager by
     // the payer and must not change side-pot caps or betting commitments.
     const fees = players.reduce((sum, player) => sum + (player.hand.timebankCommit ?? 0), 0);
@@ -1462,6 +1556,7 @@ export class Room {
   }
 
   showdown(boards = [this.hand.board]) {
+    this.returnUncalledFoldedBet();
     const payouts = new Map(), pots = this.buildPots();
     const runouts = boards.map((board, boardIndex) =>
       this.calculateBoardResult(board, boardIndex, boards.length, pots));
@@ -1524,11 +1619,18 @@ export class Room {
     for (const proof of available.proofs) if (!seen.has(proof.position)) record.fairness.visibleCardProofs.push(proof);
     record.fairness.visibleCardProofs.sort((a, b) => a.position - b.position);
     if (available.handNo === this.handNo) this._fairCacheKey = null;
+    // Consume the first voluntary reveal even when no next hand is scheduled.
+    // Extend only an existing deadline; a reveal must never restart a held room.
+    if (!this.hand.voluntaryRevealHandled) {
+      this.hand.voluntaryRevealHandled = true;
+      if (Number.isFinite(this.nextHandAt)) this.nextHandAt += VOLUNTARY_REVEAL_DELAY_MS;
+    }
   }
 
   recordFinishedHand() {
     const record = {
       handNo: this.handNo,
+      startedAt: this.hand.startedAt ?? this.hand.fair.utc,
       smallBlind: this.hand.smallBlind, bigBlind: this.hand.bigBlind,
       board: this.hand.board.map(item => cardLabel(item.card)),
       boards: this.hand.result?.boards ?? [this.hand.board.map(item => cardLabel(item.card))],
@@ -1662,7 +1764,8 @@ export class Room {
     const publicRunout = runout ? {
       phase: runout.phase, eligibleForTwice: runout.eligibleForTwice, reason: runout.reason,
       equity: runout.equity, trailingSeat: runout.trailingSeat, leadingSeat: runout.leadingSeat,
-      equityMethod: runout.equityMethod ?? 'exact',
+      equityMethod: runout.equityMethod ??
+        (runout.phase === 'calculating' || runout.reason === 'equityUnavailable' ? null : 'exact'),
       equitySamples: runout.equitySamples ?? null,
       equityErrorPct: runout.equityErrorPct ?? null,
       proposal: runout.proposal, response: runout.response, times: runout.times,
@@ -1711,12 +1814,28 @@ export class Room {
     const canAct = this.status === 'playing' && Number.isInteger(viewer.seat) &&
       Number.isInteger(hand?.actingSeat) && viewer.seat === hand.actingSeat &&
       viewer.hand?.handNo === this.handNo;
+    // Full historical proofs and events remain in the saved history and its
+    // paginated API. Repeating them in every player's live snapshot makes a
+    // busy ten-seat room consume megabytes of bandwidth for a single action.
+    const history = this.history.slice(-5).map(record => ({
+      handNo: record.handNo,
+      startedAt: record.startedAt ?? record.fairness?.utc ?? null,
+      smallBlind: record.smallBlind, bigBlind: record.bigBlind,
+      board: record.board, boards: record.boards,
+      result: record.result, shownHands: record.shownHands,
+      fairness: record.fairness ? {
+        utc: record.fairness.utc,
+        seedCommitment: record.fairness.seedCommitment,
+        deckRoot: record.fairness.deckRoot,
+        visibleCardCount: record.fairness.visibleCardProofs?.length ?? 0
+      } : null
+    }));
     return {
       roomCode: this.code, capacity: this.capacity, seatingCapacity: this.seats.length,
       pendingCapacity: this.pendingCapacity,
       pendingBigBlind: this.pendingBigBlind, tableSettingsNotice: this.tableSettingsNotice,
       status: this.status, handNo: this.handNo,
-      serverTime: Date.now(), nextHandAt: this.nextHandAt,
+      serverTime: Date.now(), stateVersion: this.stateVersion, nextHandAt: this.nextHandAt,
       pause: this.isPaused() ? this.pause : null,
       smallBlind: this.smallBlind, bigBlind: this.bigBlind,
       handSmallBlind: hand?.smallBlind ?? null, handBigBlind: hand?.bigBlind ?? null,
@@ -1727,8 +1846,12 @@ export class Room {
       pot: hand ? this.pot() : 0, currentBet: hand?.currentBet ?? 0,
       minRaiseTo: hand && this.status === 'playing' && !runout ? this.minRaiseTo() : null,
       actingSeat: hand?.actingSeat ?? null, actionDeadline: hand?.actionDeadline ?? null,
+      // The display reaches zero after 30 seconds; the server accepts actions
+      // for five more seconds before timing out or buying the first paid block.
+      actionDisplayDeadline: Number.isFinite(hand?.actionDeadline) ? hand.actionDeadline -
+        (hand.actionTimebankBlocks > 0 ? 0 : ACTION_GRACE_MS) : null,
       actionWindowMs: this.status === 'playing' && Number.isInteger(hand?.actingSeat) ?
-        (hand.actionTimebankBlocks > 0 ? TIMEBANK_BLOCK_MS : ACTION_TIME_MS) : null,
+        (hand.actionTimebankBlocks > 0 ? TIMEBANK_BLOCK_MS : ACTION_DISPLAY_TIME_MS) : null,
       actionTimebankBlocks: hand?.actionTimebankBlocks ?? 0,
       dealerSeat: hand?.dealerSeat ?? null, smallBlindSeat: hand?.smallBlindSeat ?? null,
       bigBlindSeat: hand?.bigBlindSeat ?? null, seats,
@@ -1767,7 +1890,7 @@ export class Room {
         canEditTableSettings: viewer.seat === null
       },
       spectatorCount: [...this.members.values()].filter(member => member.seat === null && member.connections.size > 0).length,
-      events: this.events.slice(-250), history: this.history.slice(-20),
+      events: this.events.slice(-250), history, historyTotal: this.history.length,
       ledger: this.ledger(), result: hand?.result ?? null,
       fairness: this.publicFairness()
     };
@@ -1792,6 +1915,15 @@ export class Room {
         throw new GameError('行动已更新，请重新选择。');
       }
     }
+    if (data.type === 'action' && data.action === 'call' && Object.hasOwn(data, 'maxCallAmount')) {
+      // A preselected short-stack call authorizes only its displayed cost.
+      // Recheck the cap after timeout handling and against authoritative funds.
+      if (!member.hand || member.seat !== this.hand?.actingSeat ||
+          !Number.isSafeInteger(data.maxCallAmount) || data.maxCallAmount <= 0 ||
+          Math.min(this.toCall(member), this.spendableStack(member)) > data.maxCallAmount) {
+        throw new GameError('行动已更新，请重新选择。');
+      }
+    }
     switch (data.type) {
       case 'sit': this.sit(member, data.seat, data.buyIn ?? DEFAULT_BUY_IN); break;
       case 'stand': this.stand(member); break;
@@ -1809,7 +1941,7 @@ export class Room {
       case 'setBigBlind': this.setBigBlind(member, data.amount); break;
       default: throw new GameError('未知命令');
     }
-    this.changed();
+    this.changed({ reconcileAutoStart: data.type !== 'reveal' });
     return this.stateFor(token);
   }
 

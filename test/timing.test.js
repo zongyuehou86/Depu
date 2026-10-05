@@ -67,11 +67,11 @@ test('sitting out mid-hand folds current cards, and returning takes effect next 
   assert.equal(second.hand.hole.length, 2);
 });
 
-test('thirty-second action clock checks when free and folds when facing a bet', () => {
-  assert.equal(ACTION_TIME_MS, 30_000);
+test('thirty-five-second action clock checks when free and folds when facing a bet', () => {
+  assert.equal(ACTION_TIME_MS, 35_000);
   const { room, players: [first, second] } = seatedRoom();
   room.command(first.token, { type: 'nextHand' });
-  assert.ok(room.hand.actionDeadline >= Date.now() + 29_500);
+  assert.ok(room.hand.actionDeadline >= Date.now() + 34_500);
   room.hand.actionDeadline = Date.now() - 1;
   assert.equal(room.timeoutAction(), true);
   assert.equal(room.status, 'finished');
@@ -108,7 +108,7 @@ test('old snapshots migrate deadlines, waiting timers, and duplicate identities 
   old.hand.actionDeadline = Date.now() + 90_000;
   for (const member of old.members) { delete member.sittingOut; delete member.revealable; }
   const recovered = Room.fromJSON(old);
-  assert.equal(recovered.hand.timerVersion, 3);
+  assert.equal(recovered.hand.timerVersion, 4);
   assert.ok(recovered.hand.actionDeadline <= Date.now() + ACTION_TIME_MS);
   assert.ok(recovered.hand.actionDeadline > Date.now() + ACTION_TIME_MS - 1000);
   assert.equal(recovered.requireMember(first.token).sittingOut, false);

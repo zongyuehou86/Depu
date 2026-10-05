@@ -10,7 +10,7 @@
   const sounds = window.PokerSounds;
   const soundPlanner = window.PokerSoundEvents?.createPlanner();
   const preactions = window.PokerPreactions.createController();
-  const state = { roomCode: '', token: '', data: null, socket: null, retry: null, poll: null, timer: null, soundTurnTimer: null, soundResumeAt: 0, clockOffset: 0, session: 0, mode: 'create', pending: false, resumeCancelled: false, newRunoutCards: new Set(), seatDialogSeat: null, tableSettingsRoomCode: '', tableSettingsSeenId: 0 };
+  const state = { roomCode: '', token: '', data: null, socket: null, socketSeenAt: 0, socketReceivedAt: 0, refreshing: null, lastSyncAt: 0, retry: null, poll: null, timer: null, soundTurnTimer: null, soundResumeAt: 0, clockOffset: 0, session: 0, mode: 'create', pending: false, resumeCancelled: false, newRunoutCards: new Set(), seatDialogSeat: null, tableSettingsRoomCode: '', tableSettingsSeenId: 0 };
   const names = { preflop: '翻牌前', flop: '翻牌', turn: '转牌', river: '河牌', showdown: '摊牌', waiting: '等待开局' };
   const suits = { s: '♠', h: '♥', d: '♦', c: '♣' };
   const ranks = { T: '10', J: 'J', Q: 'Q', K: 'K', A: 'A' };
@@ -539,19 +539,37 @@
     return cause?.status === 410 && (!cause.errorCode || cause.errorCode === 'ROOM_CLOSED');
   }
 
-  async function request(path, { method = 'GET', body, token = state.token } = {}) {
+  async function request(path, { method = 'GET', body, token = state.token, timeoutMs = 8000 } = {}) {
     const headers = { Accept: 'application/json' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (token) headers.Authorization = `Bearer ${token}`;
-    const response = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), cache: 'no-store' });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const error = new Error(data.message || data.error || t('请求失败（{status}）', { status: response.status }));
-      error.status = response.status;
-      error.errorCode = data.errorCode || data.code || '';
-      throw error;
+    const controller = new AbortController();
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(t('网络请求超时，请检查连接后重试。')));
+        controller.abort();
+      }, timeoutMs);
+    });
+    try {
+      return await Promise.race([timeout, (async () => {
+        const response = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body),
+          cache: 'no-store', signal: controller.signal });
+        const data = await response.json().catch((error) => {
+          if (error.name === 'AbortError') throw error;
+          return {};
+        });
+        if (!response.ok) {
+          const error = new Error(data.message || data.error || t('请求失败（{status}）', { status: response.status }));
+          error.status = response.status;
+          error.errorCode = data.errorCode || data.code || '';
+          throw error;
+        }
+        return data;
+      })()]);
+    } finally {
+      clearTimeout(timer);
     }
-    return data;
   }
 
   function refreshSavedIdentity() {
@@ -701,6 +719,10 @@
     state.retry = null;
     state.poll = null;
     state.timer = null;
+    state.refreshing = null;
+    state.lastSyncAt = 0;
+    state.socketSeenAt = 0;
+    state.socketReceivedAt = 0;
     if (state.socket) {
       state.socket.onclose = null;
       state.socket.close();
@@ -740,9 +762,7 @@
     state.timer = setInterval(updateTimers, 250);
     updateTimers();
     connectSocket(state.session);
-    state.poll = setInterval(() => {
-      if (!state.socket || state.socket.readyState !== WebSocket.OPEN) void refreshState();
-    }, 3000);
+    state.poll = setInterval(syncConnection, 3000);
     if (!initial) void refreshState();
   }
 
@@ -828,11 +848,43 @@
       if (session !== state.session || code !== state.roomCode || token !== state.token) return;
       if (isRoomClosedError(cause) && closeExpiredRoom(code, { session, token })) return;
       showToast(cause.message || t('切换玩家失败。'));
-    } finally { if (session === state.session && code === state.roomCode && token === state.token) state.pending = false; }
+    } finally {
+      if (session === state.session && code === state.roomCode && token === state.token) {
+        state.pending = false;
+        if (state.data) renderActions(state.data);
+      }
+    }
+  }
+
+  function syncConnection({ force = false } = {}) {
+    if (!state.roomCode || !state.token) return;
+    const now = Date.now();
+    const socket = state.socket;
+    if (socket && now - state.socketSeenAt > 35_000) {
+      // An OPEN socket can still be silent after a network change or device sleep.
+      state.socket = null;
+      socket.onopen = socket.onmessage = socket.onclose = socket.onerror = null;
+      socket.close();
+      preactions.reset();
+      state.soundResumeAt = now + state.clockOffset;
+      clearTimeout(state.soundTurnTimer);
+      state.soundTurnTimer = null;
+      sounds?.stop();
+      if (state.data) renderActions(state.data);
+    }
+    if (!state.socket || state.socket.readyState === WebSocket.CLOSED || state.socket.readyState === WebSocket.CLOSING) {
+      connectSocket(state.session);
+    }
+    if (force || !state.socket || state.socket.readyState !== WebSocket.OPEN || now - state.lastSyncAt >= 15_000) {
+      void refreshState();
+    }
   }
 
   function connectSocket(session) {
     if (session !== state.session || !state.roomCode) return;
+    if (state.socket && (state.socket.readyState === WebSocket.OPEN || state.socket.readyState === WebSocket.CONNECTING)) return;
+    clearTimeout(state.retry);
+    state.retry = null;
     const roomCode = state.roomCode;
     const token = state.token;
     let receivedState = false;
@@ -840,12 +892,24 @@
     const url = `${scheme}//${location.host}/ws?room=${encodeURIComponent(state.roomCode)}&token=${encodeURIComponent(state.token)}`;
     const socket = new WebSocket(url);
     state.socket = socket;
+    state.socketSeenAt = Date.now();
+    state.socketReceivedAt = 0;
+    const current = () => session === state.session && roomCode === state.roomCode && token === state.token && state.socket === socket;
     setConnection('连接中');
-    socket.onopen = () => { if (session === state.session) setConnection('实时在线', 'online'); };
+    socket.onopen = () => {
+      if (!current()) return;
+      state.socketSeenAt = Date.now();
+      // A completed handshake alone does not prove room updates are arriving.
+    };
     socket.onmessage = (event) => {
-      if (session !== state.session || roomCode !== state.roomCode || token !== state.token) return;
+      if (!current()) return;
       let packet;
       try { packet = JSON.parse(event.data); } catch { return; }
+      if (!packet || !['heartbeat', 'state', 'roomClosed', 'roomEffect', 'giftEffect', 'error'].includes(packet.type)) return;
+      state.socketSeenAt = Date.now();
+      state.socketReceivedAt = state.socketSeenAt;
+      setConnection('实时在线', 'online');
+      if (packet.type === 'heartbeat') return;
       if (packet.type === 'roomClosed' && packet.reason === 'inactive') {
         closeExpiredRoom(packet.roomCode || roomCode, { session, token });
         return;
@@ -859,12 +923,14 @@
       else if (packet.type === 'error') showToast(packet.message || t('操作未完成。'));
     };
     socket.onclose = (event) => {
-      if (session !== state.session || roomCode !== state.roomCode || token !== state.token) return;
+      if (!current()) return;
       if (event.code === 4004) {
         closeExpiredRoom(roomCode, { session, token });
         return;
       }
       state.socket = null;
+      state.socketSeenAt = 0;
+      state.socketReceivedAt = 0;
       preactions.reset();
       if (state.data) renderActions(state.data);
       if (receivedState) {
@@ -876,19 +942,29 @@
       setConnection('正在重连', 'offline');
       state.retry = setTimeout(() => connectSocket(session), 2500);
     };
-    socket.onerror = () => { if (session === state.session && roomCode === state.roomCode && token === state.token) setConnection('连接中断', 'offline'); };
+    socket.onerror = () => {
+      if (!current()) return;
+      state.socketReceivedAt = 0;
+      setConnection('连接中断', 'offline');
+    };
   }
 
   async function refreshState() {
     if (!state.roomCode || !state.token) return;
+    if (state.refreshing) return;
     const session = state.session;
     const roomCode = state.roomCode;
     const token = state.token;
+    const refresh = { session, roomCode, token };
+    state.refreshing = refresh;
+    state.lastSyncAt = Date.now();
     try {
       const fresh = await request(`/api/rooms/${encodeURIComponent(roomCode)}/state`, { token });
       if (session !== state.session || roomCode !== state.roomCode || token !== state.token) return;
       applyState(fresh.state || fresh);
-      if (!state.socket || state.socket.readyState !== WebSocket.OPEN) setConnection('正在重连', 'offline');
+      const realtimeAlive = state.socket?.readyState === WebSocket.OPEN && state.socketReceivedAt > 0 &&
+        Date.now() - state.socketReceivedAt <= 35_000;
+      setConnection(realtimeAlive ? '实时在线' : '正在重连', realtimeAlive ? 'online' : 'offline');
     } catch (cause) {
       if (session !== state.session || roomCode !== state.roomCode || token !== state.token) return;
       if (isRoomClosedError(cause)) {
@@ -898,18 +974,27 @@
       preactions.reset();
       if (state.data) renderActions(state.data);
       setConnection('连接中断', 'offline');
+    } finally {
+      if (state.refreshing === refresh) state.refreshing = null;
     }
   }
 
   async function command(payload) {
     if (state.pending || !state.roomCode) return false;
     state.pending = true;
-    if (['action', 'stand', 'sitOut'].includes(payload.type)) preactions.reset();
-    if (state.data) renderActions(state.data);
     const session = state.session;
     const roomCode = state.roomCode;
     const token = state.token;
     try {
+      if (['action', 'stand', 'sitOut'].includes(payload.type)) preactions.reset();
+      if (state.data) renderActions(state.data);
+      if (payload.type === 'action' && !Object.hasOwn(payload, 'expectedAction') && state.data) {
+        const data = state.data;
+        payload = { ...payload, expectedAction: {
+          handNo: data.handNo, streetIndex: data.streetIndex, actingSeat: data.actingSeat,
+          actionDeadline: data.actionDeadline, currentBet: data.currentBet
+        } };
+      }
       const response = await request(`/api/rooms/${encodeURIComponent(state.roomCode)}/command`, { method: 'POST', body: payload });
       if (session !== state.session || roomCode !== state.roomCode || token !== state.token) return false;
       if (response.state) applyState(response.state);
@@ -917,7 +1002,7 @@
       if (session !== state.session || roomCode !== state.roomCode || token !== state.token) return false;
       if (response.effect?.type === 'giftEffect') showGiftEffect(response.effect);
       else if (response.effect) queueRoomEffect(response.effect);
-      if (payload.type === 'timebank' && payload.enabled) showToast(t('已开启加时：30秒后每10秒支付10筹码。'));
+      if (payload.type === 'timebank' && payload.enabled) showToast(t('已开启加时：35秒后每10秒支付10筹码。'));
       if (payload.type === 'sit' && state.data?.hero?.waitingNextHand) showToast(t('已入座；本手不参与，从下一手开始发牌。'));
       if (payload.type === 'rebuy') showToast(t(state.data?.status === 'playing' ? '补码 2,000 已排队，本手结束结算。' : '已补码 2,000。'));
       if (payload.type === 'reveal') showToast(t('你的手牌已公开。'));
@@ -933,7 +1018,9 @@
         closeExpiredRoom(roomCode, { session, token });
         return false;
       }
+      preactions.reset();
       showToast(cause.message || t('操作未完成，请重试。'));
+      void refreshState();
       return false;
     } finally {
       if (session === state.session && roomCode === state.roomCode && token === state.token) {
@@ -952,7 +1039,8 @@
     const queued = preactions.observe(data);
     if (!queued) return;
     renderActions(data);
-    void command({ type: 'action', action: queued.action, expectedAction: {
+    void command({ type: 'action', action: queued.action,
+      ...(queued.maxCallAmount == null ? {} : { maxCallAmount: queued.maxCallAmount }), expectedAction: {
       handNo: data.handNo, streetIndex: data.streetIndex, actingSeat: data.actingSeat, actionDeadline: data.actionDeadline, currentBet: data.currentBet
     } });
   }
@@ -972,8 +1060,22 @@
     const serverTime = Number(fresh.serverTime);
     const previous = state.data;
     const previousTime = Number(previous?.serverTime);
+    const versioned = Number.isSafeInteger(fresh.stateVersion) && fresh.stateVersion >= 0;
+    const previousVersioned = Number.isSafeInteger(previous?.stateVersion) && previous.stateVersion >= 0;
+    if (previous?.roomCode === fresh.roomCode && previousVersioned) {
+      if (!versioned || fresh.stateVersion < previous.stateVersion) return;
+      if (fresh.stateVersion === previous.stateVersion) {
+        // Periodic synchronization may advance the clock without changing the table.
+        if (Number.isFinite(serverTime) && serverTime > 0 && (!Number.isFinite(previousTime) || serverTime >= previousTime)) {
+          state.data = { ...previous, serverTime };
+          state.clockOffset = serverTime - Date.now();
+          if (state.soundResumeAt && serverTime >= state.soundResumeAt) state.soundResumeAt = 0;
+        }
+        return;
+      }
+    }
     // A late HTTP response must not undo a newer WS state or cancel its turn cue.
-    if (previous?.roomCode === fresh.roomCode && Number.isFinite(serverTime) && serverTime > 0 &&
+    if (!(versioned && previousVersioned) && previous?.roomCode === fresh.roomCode && Number.isFinite(serverTime) && serverTime > 0 &&
         Number.isFinite(previousTime) && serverTime < previousTime) return;
     const cues = soundPlanner?.observe(fresh, { silent: soundSilent, since: state.soundResumeAt,
       now: Number.isFinite(serverTime) && serverTime > 0 ? serverTime : Date.now() + state.clockOffset }) || [];
@@ -1026,7 +1128,7 @@
     roomTimer.hidden = true;
     actionTimer.hidden = true;
     const playing = data?.status === 'playing' && !data?.runout;
-    const deadline = Number(data?.actionDeadline);
+    const deadline = Number(data?.actionDisplayDeadline ?? data?.actionDeadline);
     const paused = data?.pause && Number(data.pause.endAt) > giftNow();
     const effectiveNow = paused ? Number(data.pause.endAt) : giftNow();
     const windowMs = Number(data?.actionWindowMs) || (Number(data?.actionTimebankBlocks) > 0 ? 10_000 : 30_000);
@@ -1319,10 +1421,14 @@
     const foldEnabled = acting || (!state.pending && preactions.canSelect('fold', data));
     const checkEnabled = acting || (!state.pending && preactions.canSelect('check', data));
     const checkFoldEnabled = !hero.canAct && !state.pending && preactions.canSelect('checkFold', data);
-    const toCall = Math.max(0, Number(hero.toCall) || 0);
+    const toCall = hero.canAct ? Math.max(0, Number(hero.toCall) || 0) :
+      Math.max(0, (Number(data.currentBet) || 0) - (Number(me?.streetCommit) || 0));
+    const spendable = Math.max(0, Number(hero.spendableStack ?? me?.spendableStack ?? me?.stack) || 0);
+    const callAmount = Math.min(toCall, spendable);
     const fold = `<button class="button danger action-fold" data-action="fold" ${hero.canAct ? '' : `data-preaction="fold" aria-pressed="${selected === 'fold'}"`} ${foldEnabled ? '' : 'disabled'}>${safe(t('弃牌'))}</button>`;
-    const call = hero.canAct && toCall > 0
-      ? `<button class="button secondary action-call" data-action="call" ${acting ? '' : 'disabled'}>${safe(t('跟注 {amount}', { amount: chipAmount(toCall, data) }))}</button>`
+    const callEnabled = acting || (!state.pending && preactions.canSelect('call', data));
+    const call = toCall > 0
+      ? `<button class="button secondary action-call" data-action="call" ${hero.canAct ? '' : `data-preaction="call" aria-pressed="${selected === 'call'}"`} ${callEnabled && callAmount > 0 ? '' : 'disabled'}>${safe(t('跟注 {amount}', { amount: chipAmount(callAmount, data) }))}</button>`
       : `<button class="button action-check" data-action="check" ${hero.canAct ? '' : `data-preaction="check" aria-pressed="${selected === 'check'}"`} ${checkEnabled ? '' : 'disabled'}>${safe(t('过牌'))}</button>`;
     const checkFold = `<button class="button action-checkfold" ${hero.canAct ? 'aria-pressed="false"' : `data-preaction="checkFold" aria-pressed="${selected === 'checkFold'}"`} ${checkFoldEnabled ? '' : 'disabled'} aria-label="${safe(t('自动过牌/弃牌'))}">${safe(t('过牌/弃牌'))}</button>`;
     const canRaise = acting && Boolean(hero.canRaise);
@@ -1343,7 +1449,7 @@
     }).join('');
     const timebankEnabled = Boolean(hero.timebankEnabled);
     const canTimebank = !state.pending && !paused && Boolean(hero.canUseTimebank || timebankEnabled);
-    const timebank = `<button class="size-button action-timebank" data-timebank="${!timebankEnabled}" aria-pressed="${timebankEnabled}" type="button" ${canTimebank ? '' : 'disabled'} title="${safe(t('30秒后每10秒支付10筹码入池'))}" aria-label="${safe(t('付费加时'))}">${safe(t('加时'))}</button>`;
+    const timebank = `<button class="size-button action-timebank" data-timebank="${!timebankEnabled}" aria-pressed="${timebankEnabled}" type="button" ${canTimebank ? '' : 'disabled'} title="${safe(t('35秒后每10秒支付10筹码入池'))}" aria-label="${safe(t('付费加时'))}">${safe(t('加时'))}</button>`;
     return `${fold}${call}${checkFold}<div class="raise-control"><input id="raise-amount" class="amount-input" type="number" inputmode="${inputUnit === 'bb' ? 'decimal' : 'numeric'}" min="${chips.inputValue(minLegal, data)}" max="${chips.inputValue(max, data)}" step="${chips.inputStep(data)}" data-chip-unit="${inputUnit}" value="${safe(initial)}" data-action-context="${safe(raiseContext)}" aria-label="${safe(inputUnit === 'bb' ? t('输入{verb}BB数', { verb }) : t('输入{verb}筹码数', { verb }))}" ${disabled}>${inputUnit === 'bb' ? '<span class="raise-unit" aria-hidden="true">BB</span>' : ''}<button class="raise-step" data-step="-1" type="button" ${disabled} aria-label="${safe(t('减少50筹码'))}">−</button><button class="raise-step" data-step="1" type="button" ${disabled} aria-label="${safe(t('增加50筹码'))}">+</button><button class="button action-raise" data-action="raise" ${disabled}>${safe(verb)}</button></div><div class="raise-sizes">${timebank}${sizeButtons}<button class="size-button action-allin" data-fill="allin" type="button" title="${safe(t('先填入全下金额，再点{verb}确认', { verb }))}" ${disabled}>${safe(t('全押'))}</button></div>`;
   }
 
@@ -1376,7 +1482,10 @@
       return;
     }
     if (runout) {
-      if (runout.phase === 'paused') {
+      if (runout.phase === 'calculating') {
+        title.textContent = t('正在计算胜率…');
+        controls.innerHTML = `<span class="muted-text">${safe(t('正在计算胜率…'))}</span>`;
+      } else if (runout.phase === 'paused') {
         title.textContent = t('跑马已暂停');
         controls.innerHTML = `<span class="muted-text">${safe(t('本手跑马已暂停，请房主检查本机服务。'))}</span>`;
       } else if (runout.phase === 'trailingVote') {
@@ -1402,7 +1511,9 @@
     title.textContent = t(hero.canAct ? '轮到你行动' : '牌局操作');
     if (hero.canAct) {
       const toCall = Math.max(0, Number(hero.toCall) || 0);
-      $('#to-call-label').textContent = toCall ? t('需跟注 {amount}', { amount: chipAmount(toCall, data) }) : t('可免费过牌');
+      const me = seated ? data.seats?.[hero.seat] : null;
+      const spendable = Math.max(0, Number(hero.spendableStack ?? me?.spendableStack ?? me?.stack) || 0);
+      $('#to-call-label').textContent = toCall ? t('需跟注 {amount}', { amount: chipAmount(Math.min(toCall, spendable), data) }) : t('可免费过牌');
     }
     controls.innerHTML = bettingControlsHtml(data);
     if (canStart(data) && seated && !hero.sittingOut && !hero.pendingSitOut && data.nextHandAt) {
@@ -1648,8 +1759,11 @@
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && state.roomCode) {
       state.soundResumeAt = giftNow();
-      void refreshState();
+      syncConnection({ force: true });
     }
+  });
+  window.addEventListener('online', () => {
+    if (state.roomCode) syncConnection({ force: true });
   });
   $('#gift-open').addEventListener('click', () => { if (giftPicker.open) closeGiftPicker(); else openGiftPicker(); });
   $('#gift-close').addEventListener('click', () => closeGiftPicker());

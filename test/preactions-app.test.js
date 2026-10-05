@@ -204,6 +204,14 @@ test('runout choices and hand reveal replace ordinary betting controls below the
   assert.match(controls.innerHTML, /data-runout-choice="2"/);
   assert.doesNotMatch(controls.innerHTML, /data-action=|data-preaction=|raise-amount/);
 
+  const calculating = table({ runout: { phase: 'calculating', equity: [], deadline: null } });
+  ui.renderActions(calculating);
+  assert.equal(panel.hidden, false);
+  assert.equal(ui.nodes['#action-title'].textContent, '正在计算胜率…');
+  assert.match(controls.innerHTML, /正在计算胜率…/);
+  assert.doesNotMatch(controls.innerHTML, /<button|data-action=|data-runout-choice=/,
+    'equity calculation offers no betting or premature vote');
+
   const response = table({ runout: { phase: 'leaderVote', leadingSeat: 0 } });
   ui.renderActions(response);
   assert.match(controls.innerHTML, /data-runout-response="true"/);
@@ -246,4 +254,83 @@ test('a local choice is discarded on hand end, leaving the seat or changing room
   const closeSource = app.match(/    socket\.onclose = \(event\) => \{[\s\S]*?\n    \};/)?.[0];
   assert.match(stopSource || '', /preactions\.reset\(\)/, 'leaving a room clears the local choice');
   assert.match(closeSource || '', /preactions\.reset\(\)/, 'socket disconnect clears the local choice');
+});
+
+test('offturn call renders the owed chips, has a selected style and dispatches one capped guarded call', () => {
+  const waiting = table({ currentBet: 100 });
+  const ui = renderHarness(waiting), sent = [];
+  ui.renderActions(waiting);
+  assert.match(ui.nodes['#action-controls'].innerHTML,
+    /action-call" data-action="call" data-preaction="call" aria-pressed="false"[^>]*>跟注 80<\/button>/);
+  assert.doesNotMatch(ui.nodes['#action-controls'].innerHTML, /data-preaction="check"/);
+  assert.match(css, /\.action-controls \.action-call\[aria-pressed="true"\]/);
+  ui.preactions.toggle('call', waiting);
+  ui.renderActions(waiting);
+  assert.match(ui.nodes['#action-controls'].innerHTML, /data-preaction="call" aria-pressed="true"/);
+  const run = productionFunction('runPreaction', { state: ui.state, preactions: ui.preactions,
+    renderActions: ui.renderActions, command: payload => sent.push(payload) });
+  run();
+  assert.deepEqual(sent, []);
+  const turn = table({ actor: 0, currentBet: 100, serverTime: waiting.serverTime + 100 });
+  ui.state.data = turn;
+  run(); run();
+  assert.deepEqual(plain(sent), [{ type: 'action', action: 'call', maxCallAmount: 80,
+    expectedAction: { handNo: turn.handNo, streetIndex: turn.streetIndex,
+      actingSeat: 0, actionDeadline: turn.actionDeadline, currentBet: 100 } }]);
+});
+
+function precallCommandHarness() {
+  const waiting = table({ currentBet: 100 });
+  const ui = renderHarness(waiting), requests = [];
+  Object.assign(ui.state, { roomCode: waiting.roomCode, token: 'test-token', session: 1 });
+  ui.preactions.toggle('call', waiting);
+  let requestHandler = async () => { throw new Error('test failed request'); }, refreshes = 0, command;
+  const runPreaction = productionFunction('runPreaction', {
+    state: ui.state, preactions: ui.preactions, renderActions: ui.renderActions,
+    command: payload => command(payload)
+  });
+  const applyState = data => {
+    ui.state.data = data;
+    ui.preactions.observe(data, { consume: false });
+    runPreaction();
+  };
+  command = productionFunction('command', {
+    state: ui.state, preactions: ui.preactions, renderActions: ui.renderActions,
+    request: (url, options) => { requests.push(options.body); return requestHandler(url, options); },
+    applyState, refreshState: async () => { refreshes++; },
+    showGiftEffect() {}, queueRoomEffect() {}, showToast() {},
+    t: value => value, money: value => String(value), isRoomClosedError: () => false,
+    closeExpiredRoom() {}, runPreaction
+  }, true);
+  return { ui, waiting, requests, command, applyState, runPreaction,
+    setRequest: fn => { requestHandler = fn; }, refreshes: () => refreshes };
+}
+
+test('a raise received during another pending command cancels precall before finally can submit it', async () => {
+  const h = precallCommandHarness();
+  let finish;
+  h.setRequest(() => new Promise(resolve => { finish = resolve; }));
+  const pending = h.command({ type: 'rebuy', amount: 2000 });
+  const raised = table({ actor: 0, currentBet: 110, serverTime: h.waiting.serverTime + 100 });
+  h.applyState(raised);
+  assert.equal(h.ui.preactions.getSelected(), null);
+  assert.equal(h.ui.state.pending, true);
+  finish({ state: raised });
+  await pending;
+  assert.deepEqual(h.requests.map(item => item.type), ['rebuy']);
+});
+
+test('failed precall is cleared, refreshes state and is never retried automatically', async () => {
+  const h = precallCommandHarness();
+  h.applyState(table({ actor: 0, currentBet: 100, serverTime: h.waiting.serverTime + 100 }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.requests[0].action, 'call');
+  assert.equal(h.requests[0].maxCallAmount, 80);
+  assert.equal(h.refreshes(), 1);
+  assert.equal(h.ui.preactions.getSelected(), null);
+  assert.equal(h.ui.state.pending, false);
+  h.runPreaction();
+  h.applyState(table({ actor: 0, currentBet: 100, serverTime: h.waiting.serverTime + 200 }));
+  assert.equal(h.requests.length, 1);
 });

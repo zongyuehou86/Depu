@@ -319,6 +319,8 @@
     ,['本手进行中入座，下手开始参与。', '本手進行中入座，下一手起參與。', 'You join from the next hand.']
     ,['来自 {name}', '來自 {name}', 'From {name}']
     ,['正在跑马发牌', '正在跑馬發牌', 'Dealing runout']
+    ,['正在计算胜率…', '正在計算勝率…', 'Calculating equity…']
+    ,['网络请求超时，请检查连接后重试。', '網路請求逾時，請檢查連線後重試。', 'The request timed out. Check your connection and try again.']
     ,['正在重连', '正在重新連線', 'Reconnecting']
     ,['现在展示花束，手末统一结算；不足会按 2,000 筹码自动补足。', '現在展示花束，本手結束後一併結算；若不足，會按每次 2,000 籌碼自動補足。', 'Bouquets show now and settle after this hand. Shortfalls trigger 2,000-chip rebuys.']
     ,['白玫瑰 ×{quantity}', '白玫瑰 ×{quantity}', 'White roses ×{quantity}']
@@ -349,8 +351,8 @@
     ,['减少50筹码', '減少50籌碼', 'Subtract 50 chips']
     ,['付费加时', '付費加時', 'Paid extra time']
     ,['加时', '加時', 'Time']
-    ,['30秒后每10秒支付10筹码入池', '30秒後每10秒支付10籌碼入池', 'After 30 seconds, pay 10 chips into the pot per 10 seconds']
-    ,['已开启加时：30秒后每10秒支付10筹码。', '已開啟加時：30秒後每10秒支付10籌碼。', 'Extra time enabled: after 30 seconds, 10 chips per 10 seconds.']
+    ,['35秒后每10秒支付10筹码入池', '35秒後每10秒支付10籌碼入池', 'After 35 seconds, pay 10 chips into the pot per 10 seconds']
+    ,['已开启加时：35秒后每10秒支付10筹码。', '已開啟加時：35秒後每10秒支付10籌碼。', 'Extra time enabled: after 35 seconds, 10 chips per 10 seconds.']
     ,['音效设置', '音效設定', 'Sound settings']
     ,['牌桌音效', '牌桌音效', 'Table sounds']
     ,['关闭音效设置', '關閉音效設定', 'Close sound settings']
@@ -458,6 +460,7 @@
       [/^(?<name>.+) 将盲注调整为小盲 (?<small>\d+) \/ 大盲 (?<big>\d+)；下一手生效$/, '{name} 将盲注调整为小盲 {small} / 大盲 {big}；下一手生效'],
       [/^(?<name>.+) 赢得底池 (?<amount>\d+)（其他玩家弃牌）$/, '{name} 赢得底池 {amount}（其他玩家弃牌）'],
       [/^(?<name>.+) 两次牌面合计获得 (?<amount>\d+)$/, '{name} 两次牌面合计获得 {amount}'],
+      [/^(?<name>.+) 退回无人跟注的 (?<amount>\d+) 筹码$/, '{name} 退回无人跟注的 {amount} 筹码'],
       [/^(?<name>.+) 跟注 (?<amount>\d+)(?<allIn>，全下)?$/, '{name} 跟注 {amount}{allIn}'],
       [/^(?<name>.+) 加时 (?<seconds>\d+) 秒，支付 (?<amount>\d+) 筹码入底池$/, '{name} 加时 {seconds} 秒，支付 {amount} 筹码入底池'],
       [/^(?<name>.+) 补码 (?<amount>\d+)$/, '{name} 补码 {amount}'],
@@ -575,6 +578,7 @@
     ['房间容量调整为 {count} 人', '房間容量調整為 {count} 人', 'Table size changed to {count}.'],
     ['{name} 赢得底池 {amount}（其他玩家弃牌）', '{name} 贏得底池 {amount}（其他玩家棄牌）', '{name} wins pot {amount} (others folded).'],
     ['{name} 两次牌面合计获得 {amount}', '{name} 兩次牌面合計獲得 {amount}', '{name} wins {amount} across both boards.'],
+    ['{name} 退回无人跟注的 {amount} 筹码', '{name} 退回無人跟注的 {amount} 籌碼', '{name} receives {amount} uncalled chips back.'],
     ['{name} 跟注 {amount}{allIn}', '{name} 跟注 {amount}{allIn}', '{name} calls {amount}{allIn}'],
     ['{name} 补码 {amount}', '{name} 補碼 {amount}', '{name} rebuys {amount}.'],
     ['{name} 卸码 {amount}', '{name} 卸碼 {amount}', '{name} cashes out {amount}.'],

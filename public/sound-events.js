@@ -64,7 +64,7 @@
       wasActing = Boolean(data.hero?.canAct || data.hero?.canChooseRunout || data.hero?.canRespondRunout);
       turnCore = `${handNo}:${data.streetIndex ?? data.street}:${data.actingSeat}:${data.runout?.phase || ''}`;
       turnSerial += 1;
-      warnedSerial = Number(data.actionDeadline) - now <= 5000 ? turnSerial : turnSerial - 1;
+      warnedSerial = Number(data.actionDisplayDeadline ?? data.actionDeadline) - now <= 5000 ? turnSerial : turnSerial - 1;
     }
 
     function observe(data, { silent = false, since = 0, now = Date.now() } = {}) {
@@ -144,14 +144,14 @@
         wasActing = acting;
         turnCore = nextCore;
       }
-      if (silent) warnedSerial = Number(data.actionDeadline) - now <= 5000 ? turnSerial : turnSerial - 1;
+      if (silent) warnedSerial = Number(data.actionDisplayDeadline ?? data.actionDeadline) - now <= 5000 ? turnSerial : turnSerial - 1;
       return cues;
     }
 
     function warning(data, now = Date.now()) {
       if (!data || data.roomCode !== roomCode || (Number(data.handNo) || 0) !== handNo ||
           !data.hero?.canAct || data.pause || data.runout || data.status !== 'playing') return null;
-      const remaining = Number(data.actionDeadline) - now;
+      const remaining = Number(data.actionDisplayDeadline ?? data.actionDeadline) - now;
       if (!Number.isFinite(remaining) || remaining <= 0 || remaining > 5000 || warnedSerial === turnSerial) return null;
       warnedSerial = turnSerial;
       return { kind: 'warning' };
