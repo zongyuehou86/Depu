@@ -1,5 +1,7 @@
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { cardLabel, cardProof, compareValues, describeHandValue, evaluateBest, HAND_NAMES, makeFairDeck, STREET_NAMES } from './engine.js';
+import { newPhoneIdentity, validatePhoneIdentity, phoneLookup } from './phone-identity.js';
+import { attachLegacyPlayerIds, displayRecord } from './identity-display.js';
 
 export const SMALL_BLIND = 10;
 export const BIG_BLIND = 20;
@@ -180,6 +182,8 @@ export class Room {
     this.tableSettingsNotice = null;
     this.ownerToken = null;
     this.members = new Map();
+    this.phoneIdentity = newPhoneIdentity();
+    this.phoneMembers = new Map();
     this.seats = Array(this.capacity).fill(null);
     this.status = 'waiting';
     this.handNo = 0;
@@ -189,6 +193,7 @@ export class Room {
     this.history = [];
     this.eventSeq = 0;
     this.stateVersion = 0;
+    this.stateEpoch = randomUUID();
     this.transactionSeq = 0;
     this.commandReceipts = [];
     this.pendingFinancial = [];
@@ -242,6 +247,14 @@ export class Room {
       revealable: member.revealable ?? null,
       connections: new Set()
     }]));
+    if (data.phoneIdentity != null) room.phoneIdentity = validatePhoneIdentity(data.phoneIdentity);
+    for (const member of room.members.values()) {
+      if (member.phoneKey == null) continue;
+      if (!data.phoneIdentity || !/^[a-f0-9]{64}$/.test(member.phoneKey) || room.phoneMembers.has(member.phoneKey)) {
+        throw new Error('房间身份索引重复或无效');
+      }
+      room.phoneMembers.set(member.phoneKey, member);
+    }
     room.seats = data.seats;
     room.seats.length = Math.max(room.capacity, room.pendingCapacity ?? room.capacity);
     for (let seat = 0; seat < room.seats.length; seat++) room.seats[seat] ??= null;
@@ -267,6 +280,15 @@ export class Room {
     room.nextHandAt = data.nextHandAt ?? null;
     room.events = data.events;
     room.history = data.history;
+    // Old snapshots used immutable, unique display names. Attach only
+    // unambiguous references once, before the first supported rename. This
+    // migrates display metadata, never accounts, seats or financial events.
+    if (data.displayIdentityVersion !== 1) {
+      const members = [...room.members.values()];
+      room.events = attachLegacyPlayerIds(room.events, members);
+      room.history = attachLegacyPlayerIds(room.history, members);
+      room.hand = attachLegacyPlayerIds(room.hand, members);
+    }
     for (const record of room.history ?? []) {
       // Every record without a blind snapshot predates this setting.
       record.smallBlind ??= SMALL_BLIND;
@@ -327,7 +349,8 @@ export class Room {
       smallBlind: this.smallBlind, pendingBigBlind: this.pendingBigBlind,
       pendingCapacity: this.pendingCapacity, tableSettingsNotice: this.tableSettingsNotice,
       ownerToken: this.ownerToken,
-      members: [...this.members.values()].map(({ connections, ...member }) => member),
+      phoneIdentity: this.phoneIdentity, displayIdentityVersion: 1,
+      members: [...this.members.values()].map(({ connections, publishedConnected, ...member }) => member),
       seats: this.seats, status: this.status, handNo: this.handNo, hand: this.hand,
       nextHandAt: this.nextHandAt,
       events: this.events, history: this.history, eventSeq: this.eventSeq,
@@ -356,14 +379,21 @@ export class Room {
     this.closeReason = 'inactive';
     return true;
   }
-  addEvent(text, seat = null, handNo = this.handNo) {
+  addEvent(text, seat = null, handNo = this.handNo, nameRefs = []) {
     const event = { id: ++this.eventSeq, handNo, street: handNo === this.handNo && this.hand ? STREET_NAMES[this.hand.street] : null,
-      seat, text, at: new Date().toISOString() };
+      seat, text, at: new Date().toISOString(), ...(nameRefs.length ? { nameRefs } : {}) };
     this.events.push(event);
     return event;
   }
 
-  join(name, resumeToken = null) {
+  addPlayerEvent(member, text, seat = member.seat ?? null, handNo = this.handNo, start = 0) {
+    const playerId = member.id ?? member.playerId;
+    const refs = playerId && text.slice(start, start + member.nickname.length) === member.nickname
+      ? [{ playerId, start, end: start + member.nickname.length }] : [];
+    return this.addEvent(text, seat, handNo, refs);
+  }
+
+  join(name, resumeToken = null, { phoneKey = null, exactName = false } = {}) {
     this.assertOpen();
     if (resumeToken != null) {
       const existing = this.members.get(resumeToken);
@@ -373,12 +403,13 @@ export class Room {
     const clean = nickname(name);
     let unique = clean, suffix = 2;
     const used = value => [...this.members.values()].some(member => member.nickname.toLocaleLowerCase() === value.toLocaleLowerCase());
-    while (used(unique)) {
+    while (!exactName && used(unique)) {
       const tail = ` #${suffix++}`;
       unique = `${[...clean].slice(0, 18 - [...tail].length).join('')}${tail}`;
     }
     const member = {
       id: randomUUID(), token: randomBytes(32).toString('base64url'), nickname: unique,
+      ...(phoneKey ? { phoneKey } : {}),
       celebrationGuest: /^(kelly|like)$/i.test(clean),
       seat: null, stack: 0, buyInTotal: 0, rebuyCount: 0, rebuyTotal: 0,
       giftLocked: 0, giftSentTotal: 0, giftReceivedTotal: 0, lastSneakAt: 0,
@@ -389,10 +420,55 @@ export class Room {
       hand: null, revealable: null, connections: new Set()
     };
     this.members.set(member.token, member);
+    if (phoneKey) this.phoneMembers.set(phoneKey, member);
     if (!this.ownerToken) this.ownerToken = member.token;
-    this.changed();
+    this.changed({ reconcileAutoStart: !phoneKey });
     return member;
   }
+
+  joinPhone(name, phone, resumeToken = null) {
+    this.assertOpen();
+    const clean = nickname(name);
+    let key;
+    try { key = phoneLookup(this.phoneIdentity, this.code, phone); }
+    catch (error) { throw new GameError(error.message); }
+    const saved = resumeToken == null ? null : this.members.get(resumeToken);
+    if (resumeToken != null && !saved) throw new GameError('登录凭证已失效，请重新进入房间', 401);
+    let member = this.phoneMembers.get(key);
+    // Possession of an old browser bearer is the only permitted legacy claim.
+    // Never infer identity from nickname, seat, IP address or phone similarity.
+    let newlyBound = false;
+    if (saved && !saved.phoneKey) {
+      if (member && member !== saved) {
+        throw new GameError('此手机号已关联本房间另一位玩家，请使用原玩家的手机号', 409, 'PHONE_IDENTITY_CONFLICT');
+      }
+      member = saved;
+      member.phoneKey = key;
+      this.phoneMembers.set(key, member);
+      newlyBound = true;
+    }
+    if (!member) return this.join(clean, null, { phoneKey: key, exactName: true });
+    // The phone wins over a saved, already-bound browser token. This allows
+    // intentional player switching without rebinding or merging identities.
+    if (!newlyBound && member.nickname === clean) return member;
+    member.nickname = clean;
+    member.celebrationGuest = /^(kelly|like)$/i.test(clean);
+    this.changed({ reconcileAutoStart: false });
+    return member;
+  }
+
+  displayRecord(value) {
+    const projected = displayRecord(value, [...this.members.values()]);
+    const trim = item => {
+      if (!item || typeof item !== 'object') return;
+      if (!Array.isArray(item)) delete item.nameRefs;
+      for (const child of Object.values(item)) trim(child);
+    };
+    // Offsets are internal rendering metadata, not useful on the wire.
+    trim(projected);
+    return projected;
+  }
+  historyFor(offset = 0, limit = 100) { return this.displayRecord(this.history.slice(offset, offset + limit)); }
 
   requireMember(token) {
     this.assertOpen();
@@ -495,7 +571,7 @@ export class Room {
     member.skippedHandNo = null;
     member.lastPresenceEvent = null;
     this.seats[seat] = member.token;
-    this.addEvent(`${member.nickname} 带入 ${buyIn} 筹码坐在 ${seat + 1} 号位${this.status === 'playing' ? '；下一手开始参与' : ''}`, seat);
+    this.addPlayerEvent(member, `${member.nickname} 带入 ${buyIn} 筹码坐在 ${seat + 1} 号位${this.status === 'playing' ? '；下一手开始参与' : ''}`, seat);
   }
 
   stand(member) {
@@ -519,7 +595,7 @@ export class Room {
     member.skippedHandNo = null;
     this.seats[oldSeat] = null;
     member.seat = null;
-    this.addEvent(`${member.nickname} 从 ${oldSeat + 1} 号位离座`, oldSeat);
+    this.addPlayerEvent(member, `${member.nickname} 从 ${oldSeat + 1} 号位离座`, oldSeat);
   }
 
   sitOut(member) {
@@ -532,7 +608,7 @@ export class Room {
       member.pendingSitOutReason = 'manual';
       member.awayHands = 0;
       member.lastPresenceEvent = { type: 'runoutSitOut', handNo: this.handNo, at: new Date().toISOString() };
-      this.addEvent(`${member.nickname} 选择下手暂离；本手已锁定，仍参与跑马结算`, member.seat);
+      this.addPlayerEvent(member, `${member.nickname} 选择下手暂离；本手已锁定，仍参与跑马结算`, member.seat);
       return;
     }
     member.sittingOut = true;
@@ -544,16 +620,16 @@ export class Room {
       handState.needsAction = false;
       handState.lastAction = 'fold';
       this.recordAction(member, 'fold', 0, null, 'sitOut');
-      this.addEvent(`${member.nickname} 暂时离席，本手弃牌`, member.seat);
+      this.addPlayerEvent(member, `${member.nickname} 暂时离席，本手弃牌`, member.seat);
       if (this.livePlayers().length === 1) this.finishByFold();
       else if (this.hand.actingSeat === member.seat) {
         this.setActor(this.nextActor(member.seat));
         if (this.hand.actingSeat === null) this.advanceStreet();
       }
     } else if (this.status === 'playing' && handState?.allIn && !handState.folded) {
-      this.addEvent(`${member.nickname} 暂时离席；已全下的手牌继续参与本手结算`, member.seat);
+      this.addPlayerEvent(member, `${member.nickname} 暂时离席；已全下的手牌继续参与本手结算`, member.seat);
     } else {
-      this.addEvent(`${member.nickname} 暂时离席`, member.seat);
+      this.addPlayerEvent(member, `${member.nickname} 暂时离席`, member.seat);
     }
   }
 
@@ -565,7 +641,7 @@ export class Room {
       member.awayHands = 0;
       member.skippedHandNo = null;
       member.lastPresenceEvent = null;
-      this.addEvent(`${member.nickname} 取消了超时后的待暂离`, member.seat);
+      this.addPlayerEvent(member, `${member.nickname} 取消了超时后的待暂离`, member.seat);
       return;
     }
     if (!member.sittingOut) throw new GameError('你已在牌桌上');
@@ -575,7 +651,7 @@ export class Room {
     member.awayHands = 0;
     member.skippedHandNo = null;
     member.lastPresenceEvent = null;
-    this.addEvent(`${member.nickname} 返回牌桌；从下一手起参与`, member.seat);
+    this.addPlayerEvent(member, `${member.nickname} 返回牌桌；从下一手起参与`, member.seat);
   }
 
   rebuy(member, amount, requestId = null, writeAhead = () => {}) {
@@ -597,12 +673,12 @@ export class Room {
     }
     if (this.status === 'playing') {
       member.pendingRebuy += amount;
-      this.addEvent(`${member.nickname} 申请补码 ${amount}，本手结算后到账`, member.seat);
+      this.addPlayerEvent(member, `${member.nickname} 申请补码 ${amount}，本手结算后到账`, member.seat);
     } else {
       member.stack += amount;
       member.rebuyCount++;
       member.rebuyTotal += amount;
-      this.addEvent(`${member.nickname} 补码 ${amount}`, member.seat);
+      this.addPlayerEvent(member, `${member.nickname} 补码 ${amount}`, member.seat);
     }
   }
 
@@ -615,12 +691,12 @@ export class Room {
     if (transaction.handNo !== null && this.status === 'playing' && transaction.handNo === this.handNo) {
       member.pendingRebuy += transaction.amount;
       this.pendingFinancial.push(transaction);
-      this.addEvent(`${member.nickname} 申请补码 ${transaction.amount}，本手结算后到账`, member.seat);
+      this.addPlayerEvent(member, `${member.nickname} 申请补码 ${transaction.amount}，本手结算后到账`, member.seat);
     } else if (transaction.handNo === null) {
       member.stack += transaction.amount;
       member.rebuyCount++;
       member.rebuyTotal += transaction.amount;
-      this.addEvent(`${member.nickname} 补码 ${transaction.amount}`, member.seat);
+      this.addPlayerEvent(member, `${member.nickname} 补码 ${transaction.amount}`, member.seat);
     } else throw new Error('补码记录对应的手牌状态不一致');
     this.transactionSeq = transaction.seq;
     this.storeCommandReceipt({ type: 'rebuy', playerId: member.id, requestId: transaction.requestId });
@@ -743,11 +819,11 @@ export class Room {
         handState.folded = true;
         handState.lastAction = 'fold';
         this.recordAction(sender, 'fold', 0, null, 'stackTransfer');
-        this.addEvent(`${sender.nickname} 可用筹码归零，本手弃牌`, sender.seat);
+        this.addPlayerEvent(sender, `${sender.nickname} 可用筹码归零，本手弃牌`, sender.seat);
       } else {
         handState.allIn = true;
         handState.lastAction = 'allIn';
-        this.addEvent(`${sender.nickname} 可用筹码归零，本手不再行动`, sender.seat);
+        this.addPlayerEvent(sender, `${sender.nickname} 可用筹码归零，本手不再行动`, sender.seat);
       }
       handState.needsAction = false;
       if (this.livePlayers().length === 1) this.finishByFold();
@@ -838,7 +914,7 @@ export class Room {
     this.transactionSeq = transaction.seq;
     this.storeCommandReceipt({ type: 'unload', playerId: member.id,
       requestId: transaction.requestId });
-    this.addEvent(`${member.nickname} 卸码 ${DEFAULT_BUY_IN}`, member.seat);
+    this.addPlayerEvent(member, `${member.nickname} 卸码 ${DEFAULT_BUY_IN}`, member.seat);
     return true;
   }
 
@@ -981,7 +1057,7 @@ export class Room {
     this.seats.length = Math.max(this.capacity, this.pendingCapacity ?? this.capacity);
     for (let seat = 0; seat < this.seats.length; seat++) this.seats[seat] ??= null;
     const message = `下一局牌桌人数为${capacity}人`;
-    const event = this.addEvent(`${member.nickname} 设置${message}`);
+    const event = this.addPlayerEvent(member, `${member.nickname} 设置${message}`);
     this.tableSettingsNotice = { id: event.id, kind: 'capacity',
       bigBlind: this.pendingBigBlind ?? this.bigBlind, capacity,
       handNo: this.handNo, nextHandNo: this.handNo + 1, message, at: event.at };
@@ -993,7 +1069,7 @@ export class Room {
     if (bigBlind === (this.pendingBigBlind ?? this.bigBlind)) return;
     this.pendingBigBlind = bigBlind === this.bigBlind ? null : bigBlind;
     const message = `下一局大盲筹码数为${bigBlind}筹码`;
-    const event = this.addEvent(`${member.nickname} 设置${message}`);
+    const event = this.addPlayerEvent(member, `${member.nickname} 设置${message}`);
     this.tableSettingsNotice = { id: event.id, kind: 'bigBlind',
       bigBlind, capacity: this.pendingCapacity ?? this.capacity,
       handNo: this.handNo, nextHandNo: this.handNo + 1, message, at: event.at };
@@ -1036,7 +1112,7 @@ export class Room {
     this.hand.actions ||= [];
     const entry = {
       id: this.hand.actions.length + 1,
-      type, action, seat: member?.seat ?? null, nickname: member?.nickname ?? null,
+      type, action, playerId: member?.id ?? null, seat: member?.seat ?? null, nickname: member?.nickname ?? null,
       street: STREET_NAMES[this.hand.street], streetIndex: this.hand.street,
       amount, target, source, at: new Date().toISOString()
     };
@@ -1170,12 +1246,12 @@ export class Room {
     if (times !== 1 && times !== 2) throw new GameError('请选择发一次或两次');
     runout.proposal = times;
     this.recordAction(member, 'runoutChoice', 0, times, 'player', 'runout');
-    this.addEvent(`${member.nickname} 选择发 ${times} 次`, member.seat);
+    this.addPlayerEvent(member, `${member.nickname} 选择发 ${times} 次`, member.seat);
     if (times === 1) this.decideRunout(1);
     else {
       runout.phase = 'leaderVote';
       runout.deadline = Date.now() + RUNOUT_VOTE_MS;
-      this.addEvent(`等待领先方 ${this.seatMember(runout.leadingSeat).nickname} 接受或拒绝发两次`);
+      this.addPlayerEvent(this.seatMember(runout.leadingSeat), `等待领先方 ${this.seatMember(runout.leadingSeat).nickname} 接受或拒绝发两次`, null, this.handNo, '等待领先方 '.length);
     }
   }
 
@@ -1187,7 +1263,7 @@ export class Room {
     if (typeof accept !== 'boolean') throw new GameError('请选择接受或拒绝');
     runout.response = accept;
     this.recordAction(member, 'runoutResponse', 0, accept ? 2 : 1, 'player', 'runout');
-    this.addEvent(`${member.nickname}${accept ? '接受' : '拒绝'}发两次`, member.seat);
+    this.addPlayerEvent(member, `${member.nickname}${accept ? '接受' : '拒绝'}发两次`, member.seat);
     this.decideRunout(accept ? 2 : 1);
   }
 
@@ -1215,13 +1291,13 @@ export class Room {
       const member = this.seatMember(runout.trailingSeat);
       runout.proposal = 1;
       this.recordAction(member, 'runoutChoice', 0, 1, 'timeout', 'runout');
-      this.addEvent(`${member.nickname} 选择超时，默认发一次`, member.seat);
+      this.addPlayerEvent(member, `${member.nickname} 选择超时，默认发一次`, member.seat);
       this.decideRunout(1);
     } else if (runout.phase === 'leaderVote') {
       const member = this.seatMember(runout.leadingSeat);
       runout.response = false;
       this.recordAction(member, 'runoutResponse', 0, 1, 'timeout', 'runout');
-      this.addEvent(`${member.nickname} 确认超时，默认拒绝发两次`, member.seat);
+      this.addPlayerEvent(member, `${member.nickname} 确认超时，默认拒绝发两次`, member.seat);
       this.decideRunout(1);
     } else if (runout.phase === 'firstBoardPause') {
       runout.phase = 'dealing';
@@ -1314,7 +1390,7 @@ export class Room {
     const bb = this.post(bigPlayer, bigBlind);
     this.recordAction(bigPlayer, 'bigBlind', bb, null, 'system', 'blind');
     for (const player of participants) player.hand.needsAction = !player.hand.allIn;
-    this.addEvent(`第 ${this.handNo} 手开始；${this.seatMember(dealerSeat).nickname} 持按钮，小盲 ${sb}，大盲 ${bb}`);
+    this.addPlayerEvent(this.seatMember(dealerSeat), `第 ${this.handNo} 手开始；${this.seatMember(dealerSeat).nickname} 持按钮，小盲 ${sb}，大盲 ${bb}`, null, this.handNo, `第 ${this.handNo} 手开始；`.length);
     this.lastHandStartedAt = fair.utc;
     this.setActor(this.nextActor(bigBlindSeat));
     if (this.hand.actingSeat === null) this.advanceStreet();
@@ -1343,14 +1419,14 @@ export class Room {
       state.folded = true;
       state.needsAction = false;
       state.lastAction = 'fold';
-      this.addEvent(`${member.nickname} 弃牌`, member.seat);
+      this.addPlayerEvent(member, `${member.nickname} 弃牌`, member.seat);
       this.recordAction(member, 'fold', 0, null, source);
     } else if (action === 'check') {
       if (due) throw new GameError('面对下注不能过牌');
       state.needsAction = false;
       state.lastActedBet = this.hand.currentBet;
       state.lastAction = 'check';
-      this.addEvent(`${member.nickname} 过牌`, member.seat);
+      this.addPlayerEvent(member, `${member.nickname} 过牌`, member.seat);
       this.recordAction(member, 'check', 0, null, source);
     } else if (action === 'call') {
       if (!due) throw new GameError('目前无需跟注');
@@ -1359,7 +1435,7 @@ export class Room {
       state.needsAction = false;
       state.lastActedBet = this.hand.currentBet;
       state.lastAction = 'call';
-      this.addEvent(`${member.nickname} 跟注 ${paid}${state.allIn ? '，全下' : ''}`, member.seat);
+      this.addPlayerEvent(member, `${member.nickname} 跟注 ${paid}${state.allIn ? '，全下' : ''}`, member.seat);
       this.recordAction(member, 'call', paid, null, source);
     } else if (action === 'raise') {
       if (!this.canRaise(member)) throw new GameError('当前不能加注');
@@ -1379,7 +1455,7 @@ export class Room {
       for (const other of this.livePlayers()) {
         if (other !== member && !other.hand.allIn) other.hand.needsAction = other.hand.streetCommit < amount;
       }
-      this.addEvent(`${member.nickname} ${previous ? '加注' : '下注'}至 ${amount}${state.allIn ? '，全下' : ''}${fullRaise ? '' : '（不足额加注）'}`, member.seat);
+      this.addPlayerEvent(member, `${member.nickname} ${previous ? '加注' : '下注'}至 ${amount}${state.allIn ? '，全下' : ''}${fullRaise ? '' : '（不足额加注）'}`, member.seat);
       this.recordAction(member, 'raise', paid, amount, source);
     } else throw new GameError('未知行动');
 
@@ -1423,7 +1499,7 @@ export class Room {
         member.sittingOut = true;
         member.awayHands = 0;
         member.skippedHandNo = null;
-        this.addEvent(reason === 'manual' ? `${member.nickname} 按主动选择，从下一手起暂时离席` :
+        this.addPlayerEvent(member, reason === 'manual' ? `${member.nickname} 按主动选择，从下一手起暂时离席` :
           `${member.nickname} 因行动超时，从下一手起暂时离席`, member.seat);
         continue;
       }
@@ -1440,9 +1516,9 @@ export class Room {
           member.sittingOut = false;
           this.seats[oldSeat] = null;
           member.lastPresenceEvent = { type: 'autoStand', handNo: this.handNo, at: new Date().toISOString() };
-          this.addEvent(`${member.nickname} 连续完整暂离 5 手，自动离座成为观战者`, oldSeat);
+          this.addPlayerEvent(member, `${member.nickname} 连续完整暂离 5 手，自动离座成为观战者`, oldSeat);
         } else {
-          this.addEvent(`${member.nickname} 已连续完整暂离 ${member.awayHands}/5 手`, member.seat);
+          this.addPlayerEvent(member, `${member.nickname} 已连续完整暂离 ${member.awayHands}/5 手`, member.seat);
         }
       } else if (member.skippedHandNo === this.handNo) {
         member.skippedHandNo = null;
@@ -1458,11 +1534,11 @@ export class Room {
     for (const player of this.handPlayers()) player.hand.timebankEnabled = false;
     const totalCommit = winner.hand.totalCommit;
     this.hand.result = { type: 'fold', pot: amount, winners: [{ seat: winner.seat,
-      nickname: winner.nickname, amount, totalCommit,
+      playerId: winner.id, nickname: winner.nickname, amount, totalCommit,
       netProfit: amount - totalCommit - (winner.hand.timebankCommit ?? 0) }] };
     this.status = 'finished';
     this.setActor(null);
-    this.addEvent(`${winner.nickname} 赢得底池 ${amount}（其他玩家弃牌）`, winner.seat);
+    this.addPlayerEvent(winner, `${winner.nickname} 赢得底池 ${amount}（其他玩家弃牌）`, winner.seat);
     this.prepareRevealables();
     this.settleFinancialForHand();
     this.releaseGiftLocks();
@@ -1493,7 +1569,7 @@ export class Room {
     player.hand.totalCommit -= amount;
     player.hand.streetCommit -= Math.min(amount, player.hand.streetCommit);
     this.recordAction(player, 'uncalledReturn', amount, null, 'system', 'refund');
-    this.addEvent(`${player.nickname} 退回无人跟注的 ${amount} 筹码`, player.seat);
+    this.addPlayerEvent(player, `${player.nickname} 退回无人跟注的 ${amount} 筹码`, player.seat);
     return amount;
   }
 
@@ -1547,7 +1623,7 @@ export class Room {
       }
       const winners = [...individual].map(([seat, paid]) => {
         const display = describeHandValue(values.get(seat));
-        return { seat, nickname: this.seatMember(seat).nickname, amount: paid,
+        return { seat, playerId: this.seatMember(seat).id, nickname: this.seatMember(seat).nickname, amount: paid,
           handDisplay: display.label, handCategory: display.category };
       });
       return { potIndex, amount, eligibleSeats: pot.eligibleSeats, winners };
@@ -1570,7 +1646,7 @@ export class Room {
       const player = this.seatMember(seat);
       const totalCommit = player.hand.totalCommit;
       player.stack += amount;
-      return { seat, nickname: player.nickname, amount,
+      return { seat, playerId: player.id, nickname: player.nickname, amount,
         totalCommit, netProfit: amount - totalCommit - (player.hand.timebankCommit ?? 0) };
     });
     for (const player of this.handPlayers()) player.hand.timebankEnabled = false;
@@ -1583,8 +1659,8 @@ export class Room {
       if (boards.length === 1) {
         const player = this.seatMember(winner.seat);
         const value = evaluateBest([...player.hand.hole, ...this.hand.board].map(item => item.card));
-        this.addEvent(`${winner.nickname} 以${HAND_NAMES[value[0]]}获得 ${winner.amount}`, winner.seat);
-      } else this.addEvent(`${winner.nickname} 两次牌面合计获得 ${winner.amount}`, winner.seat);
+        this.addPlayerEvent(winner, `${winner.nickname} 以${HAND_NAMES[value[0]]}获得 ${winner.amount}`, winner.seat);
+      } else this.addPlayerEvent(winner, `${winner.nickname} 两次牌面合计获得 ${winner.amount}`, winner.seat);
     }
     this.prepareRevealables();
     this.settleFinancialForHand();
@@ -1608,11 +1684,11 @@ export class Room {
     if (!record) throw new GameError('找不到该手的结算记录');
     available.shown = true;
     if (member.hand?.handNo === available.handNo) member.hand.shown = true;
-    const event = this.addEvent(`${member.nickname} 主动亮牌：${available.cards.join(' ')}`, available.seat, available.handNo);
+    const event = this.addPlayerEvent(member, `${member.nickname} 主动亮牌：${available.cards.join(' ')}`, available.seat, available.handNo);
     record.events ||= [];
     record.events.push(event);
     record.shownHands ||= [];
-    record.shownHands.push({ seat: available.seat, nickname: member.nickname, cards: available.cards });
+    record.shownHands.push({ playerId: member.id, seat: available.seat, nickname: member.nickname, cards: available.cards });
     record.fairness ||= { visibleCardProofs: [] };
     record.fairness.visibleCardProofs ||= [];
     const seen = new Set(record.fairness.visibleCardProofs.map(item => item.position));
@@ -1637,7 +1713,7 @@ export class Room {
       result: this.hand.result,
       events: this.events.filter(event => event.handNo === this.handNo),
       shownHands: this.handPlayers().filter(player => player.hand.shown).map(player => ({
-        seat: player.seat, nickname: player.nickname,
+        playerId: player.id, seat: player.seat, nickname: player.nickname,
         cards: player.hand.hole.map(item => cardLabel(item.card))
       })),
       fairness: this.publicFairness()
@@ -1735,7 +1811,7 @@ export class Room {
     });
   }
 
-  stateFor(token) {
+  stateFor(token, { compact = false } = {}) {
     const viewer = this.requireMember(token);
     const pendingTotals = member => {
       const entries = this.pendingFinancial;
@@ -1771,7 +1847,7 @@ export class Room {
       proposal: runout.proposal, response: runout.response, times: runout.times,
       deadline: runout.deadline, nextCardAt: runout.nextCardAt,
       boardIndex: runout.boardIndex, sharedBoardCount: runout.sharedBoard?.length ?? 0,
-      boardResults: runout.boardResults ?? [],
+      boardResults: this.displayRecord(runout.boardResults ?? []),
       boards: [hand.board.map(item => cardLabel(item.card)),
         ...(runout.secondBoard ? [runout.secondBoard.map(item => cardLabel(item.card))] : [])]
     } : null;
@@ -1817,12 +1893,12 @@ export class Room {
     // Full historical proofs and events remain in the saved history and its
     // paginated API. Repeating them in every player's live snapshot makes a
     // busy ten-seat room consume megabytes of bandwidth for a single action.
-    const history = this.history.slice(-5).map(record => ({
+    const history = compact ? undefined : this.history.slice(-5).map(record => ({
       handNo: record.handNo,
       startedAt: record.startedAt ?? record.fairness?.utc ?? null,
       smallBlind: record.smallBlind, bigBlind: record.bigBlind,
       board: record.board, boards: record.boards,
-      result: record.result, shownHands: record.shownHands,
+      result: this.displayRecord(record.result), shownHands: this.displayRecord(record.shownHands),
       fairness: record.fairness ? {
         utc: record.fairness.utc,
         seedCommitment: record.fairness.seedCommitment,
@@ -1835,8 +1911,8 @@ export class Room {
       pendingCapacity: this.pendingCapacity,
       pendingBigBlind: this.pendingBigBlind, tableSettingsNotice: this.tableSettingsNotice,
       status: this.status, handNo: this.handNo,
-      serverTime: Date.now(), stateVersion: this.stateVersion, nextHandAt: this.nextHandAt,
-      pause: this.isPaused() ? this.pause : null,
+      serverTime: Date.now(), stateVersion: this.stateVersion, stateEpoch: this.stateEpoch, nextHandAt: this.nextHandAt,
+      pause: this.isPaused() ? this.displayRecord(this.pause) : null,
       smallBlind: this.smallBlind, bigBlind: this.bigBlind,
       handSmallBlind: hand?.smallBlind ?? null, handBigBlind: hand?.bigBlind ?? null,
       street: hand ? STREET_NAMES[hand.street] : null,
@@ -1856,12 +1932,12 @@ export class Room {
       dealerSeat: hand?.dealerSeat ?? null, smallBlindSeat: hand?.smallBlindSeat ?? null,
       bigBlindSeat: hand?.bigBlindSeat ?? null, seats,
       hero: {
-        playerId: viewer.id, nickname: viewer.nickname, seat: viewer.seat,
+        playerId: viewer.id, nickname: viewer.nickname, seat: viewer.seat, needsPhone: !viewer.phoneKey,
         stack: viewer.stack, giftLocked: viewer.giftLocked,
         spendableStack: this.spendableStack(viewer),
         pendingRebuy: viewer.pendingRebuy, ...ownPending, pendingGifts,
-        lastFinancialNotice: viewer.lastFinancialNotice ?? null,
-        lastFinancialSettlement: viewer.lastFinancialSettlement ?? null,
+        lastFinancialNotice: this.displayRecord(viewer.lastFinancialNotice ?? null),
+        lastFinancialSettlement: this.displayRecord(viewer.lastFinancialSettlement ?? null),
         sittingOut: !!viewer.sittingOut,
         pendingSitOut: !!viewer.pendingSitOut,
         timebankEnabled: !!ownHand?.timebankEnabled,
@@ -1890,8 +1966,8 @@ export class Room {
         canEditTableSettings: viewer.seat === null
       },
       spectatorCount: [...this.members.values()].filter(member => member.seat === null && member.connections.size > 0).length,
-      events: this.events.slice(-250), history, historyTotal: this.history.length,
-      ledger: this.ledger(), result: hand?.result ?? null,
+      events: this.displayRecord(this.events.slice(-250)), ...(compact ? {} : { history }), historyTotal: this.history.length,
+      ledger: this.ledger(), result: this.displayRecord(hand?.result ?? null),
       fairness: this.publicFairness()
     };
   }
@@ -1968,7 +2044,7 @@ export class Room {
         this.hand.actionDeadline = Math.max(this.hand.actionDeadline + TIMEBANK_BLOCK_MS,
           now + TIMEBANK_BLOCK_MS);
         this.recordAction(member, 'timebank', TIMEBANK_BLOCK_COST, 1, 'system', 'timebank');
-        this.addEvent(`${member.nickname} 加时 10 秒，支付 ${TIMEBANK_BLOCK_COST} 筹码入底池`, member.seat);
+        this.addPlayerEvent(member, `${member.nickname} 加时 10 秒，支付 ${TIMEBANK_BLOCK_COST} 筹码入底池`, member.seat);
         this.changed();
         return true;
       }
@@ -1977,7 +2053,7 @@ export class Room {
     member.pendingSitOut = true;
     member.pendingSitOutReason = 'timeout';
     member.lastPresenceEvent = { type: 'timeoutSitOut', handNo: this.handNo, at: new Date().toISOString() };
-    this.addEvent(`${member.nickname} 行动超时，自动${action === 'fold' ? '弃牌' : '过牌'}；下一手暂离`, member.seat);
+    this.addPlayerEvent(member, `${member.nickname} 行动超时，自动${action === 'fold' ? '弃牌' : '过牌'}；下一手暂离`, member.seat);
     this.recordAction(member, 'timeout', 0, null, 'system', 'timeout');
     this.act(member, action, undefined, 'timeout');
     this.changed();

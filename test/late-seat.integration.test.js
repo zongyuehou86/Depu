@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 
+// Phone fixtures use the reserved fictional +1 202-555-01xx range.
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 async function freePort() {
@@ -89,12 +90,12 @@ test('late arrivals can reserve and change a seat without joining the running ha
       });
       return { status: response.status, data: await response.json() };
     };
-    const created = await request('POST', '/api/rooms', { capacity: 4 });
+    const created = await request('POST', '/api/rooms', { capacity: 4, nickname: '甲', phone: '+12025550101' });
     assert.equal(created.status, 201);
     const code = created.data.roomCode;
     const tokens = [];
-    for (const nickname of ['甲', '乙', '后到者']) {
-      const joined = await request('POST', `/api/rooms/${code}/join`, { nickname });
+    for (const [index, nickname] of ['甲', '乙', '后到者'].entries()) {
+      const joined = await request('POST', `/api/rooms/${code}/join`, { nickname, phone: `+1202555010${index + 1}` });
       assert.equal(joined.status, 200);
       tokens.push(joined.data.token);
     }

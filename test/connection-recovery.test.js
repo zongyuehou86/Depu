@@ -33,13 +33,14 @@ function commandHarness(state, request, overrides = {}) {
 }
 
 function stateHarness(state) {
-  let renders = 0;
+  let renders = 0, resets = 0;
   const applyState = productionFunction('applyState', {
-    state, soundPlanner: null, preactions: { observe: noop }, render: () => { renders++; },
+    state, soundPlanner: null, sounds: { stop: noop },
+    preactions: { observe: noop, reset: () => { resets++; } }, render: () => { renders++; },
     playSoundCues: noop, runPreaction: noop, showToast: noop, t: value => value,
     money: String, tableSettingsNoticeText: () => '', clearTimeout
   });
-  return { applyState, renders: () => renders };
+  return { applyState, renders: () => renders, resets: () => resets };
 }
 
 test('request timeouts cover stalled headers and stalled response bodies and abort the network', async () => {
@@ -120,6 +121,46 @@ test('state versions reject late equal-time frames and same-version syncs update
   assert.equal(state.data.actingSeat, 2, 'version order survives a server clock adjustment');
   applyState({ ...newer, stateVersion: undefined, serverTime: 10_000, actingSeat: 0 });
   assert.equal(state.data.actingSeat, 2, 'legacy delayed data cannot replace a versioned state');
+});
+
+test('a restart epoch accepts a lower version and rejects delayed packets from retired epochs', () => {
+  const state = initialState();
+  state.data.stateEpoch = 'before-restart';
+  const before = { ...state.data, stateVersion: 90 };
+  state.data = before;
+  const { applyState, renders, resets } = stateHarness(state);
+  const restarted = { ...before, stateEpoch: 'after-restart', stateVersion: 2, serverTime: 500,
+    actingSeat: 1, hero: { canAct: false } };
+  applyState(restarted);
+  assert.equal(state.data, restarted, 'new epoch wins even with a lower version and clock');
+  assert.equal(resets(), 1, 'preactions cannot reuse the previous version sequence');
+  applyState({ ...before, stateVersion: 99, serverTime: 5000 });
+  assert.equal(state.data, restarted, 'a late response cannot restore the retired server epoch');
+  applyState({ ...before, stateEpoch: undefined, stateVersion: 100, serverTime: 6000 });
+  assert.equal(state.data, restarted, 'legacy packets cannot replace an epoch-aware snapshot');
+  const next = { ...restarted, stateVersion: 3, actingSeat: 2 };
+  applyState(next);
+  assert.equal(state.data, next);
+  applyState({ ...restarted, serverTime: 9000 });
+  assert.equal(state.data, next, 'version ordering still applies within the restarted epoch');
+  assert.equal(renders(), 2);
+  assert.equal(resets(), 1);
+});
+
+test('epoch upgrade from old server snapshots is accepted and retired-epoch tracking stays bounded', () => {
+  const state = initialState();
+  const { applyState } = stateHarness(state);
+  applyState({ ...state.data, stateEpoch: 'epoch-0', stateVersion: 0, serverTime: 1 });
+  assert.equal(state.data.stateEpoch, 'epoch-0');
+  for (let index = 1; index <= 40; index++) {
+    applyState({ ...state.data, stateEpoch: `epoch-${index}`, stateVersion: 0 });
+  }
+  assert.equal(state.retiredStateEpochs.size, 32);
+  assert.equal(state.retiredStateEpochs.has('epoch-39'), true);
+  assert.equal(state.data.stateEpoch, 'epoch-40');
+  applyState({ ...state.data, stateEpoch: 'epoch-39', stateVersion: 1000 });
+  assert.equal(state.data.stateEpoch, 'epoch-40');
+  assert.match(app, /function stopNetwork\(\) \{\n    state.session \+= 1;\n    state.retiredStateEpochs = new Set\(\)/);
 });
 
 function socketHarness() {
@@ -235,4 +276,48 @@ test('returning to the foreground or regaining connectivity synchronizes immedia
   handlers.online();
   assert.deepEqual(syncs, [{ force: true }, { force: true }]);
   assert.equal(state.soundResumeAt, 2000);
+});
+
+test('reconnect backoff survives polling and resets only after a real server packet', () => {
+  const h = socketHarness();
+  h.connectSocket(h.state.session);
+  const first = h.sockets[0];
+  first.onclose({ code: 1006 });
+  const retryAt = h.state.socketRetryAt;
+  assert.ok(retryAt > h.now());
+  h.syncConnection();
+  h.syncConnection();
+  assert.equal(h.sockets.length, 1, 'polling must not bypass the socket backoff');
+  h.advance(retryAt - h.now() + 1);
+  h.syncConnection();
+  assert.equal(h.sockets.length, 2);
+  h.sockets[1].onclose({ code: 1006 });
+  assert.equal(h.state.socketFailures, 2);
+  assert.ok(h.state.socketRetryAt - h.now() >= 3000);
+  h.advance(h.state.socketRetryAt - h.now() + 1);
+  h.syncConnection();
+  h.sockets[2].onopen();
+  assert.equal(h.state.socketFailures, 2, 'handshake alone is not successful delivery');
+  h.sockets[2].onmessage({ data: JSON.stringify({type: 'heartbeat'}) });
+  assert.equal(h.state.socketFailures, 0);
+  assert.equal(h.state.socketRetryAt, 0);
+});
+
+test('failed HTTP reads back off independently; foreground retry can recover immediately', async () => {
+  const h = socketHarness();
+  let reads = 0;
+  const readState = productionFunction('refreshState', {
+    state: h.state, Date: { now: h.now }, Math: Object.assign(Object.create(Math), { random: () => 0 }),
+    request: async () => { reads++; throw new Error('offline'); },
+    applyState: noop, WebSocket: {OPEN: 1}, setConnection: noop,
+    isRoomClosedError: () => false, closeExpiredRoom: noop,
+    preactions: {reset: noop}, renderActions: noop
+  }, true);
+  await readState();
+  assert.equal(reads, 1);
+  assert.equal(h.state.nextSyncAt - h.now(), 1500);
+  h.syncConnection();
+  assert.equal(h.syncs(), 0, 'periodic polling respects failed-read delay');
+  h.syncConnection({force:true});
+  assert.equal(h.syncs(), 1, 'explicit foreground/online event may retry immediately');
 });

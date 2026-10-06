@@ -9,7 +9,7 @@ const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url
 
 function soundHarness({ stored = {}, storageThrows = false, denyContext = false, audioAvailable = true,
   resumeModes = [], mobileApple = false, sessionType = null, sessionThrows = false,
-  sampleMode = null, fetchDelayMs = 0 } = {}) {
+  sampleMode = null, fetchDelayMs = 0, timerAPI = null, clock = null } = {}) {
   const calls = { started: [], stopped: [], stopTimes: [], disconnected: [], ramps: [], writes: [], events: [], resumeAttempts: 0,
     sessionTypes: [], fetched: [], decoded: [] };
   const listeners = new Map();
@@ -93,7 +93,7 @@ function soundHarness({ stored = {}, storageThrows = false, denyContext = false,
       arrayBuffer: async () => Uint8Array.from(Buffer.from(url, 'utf8')).buffer };
   };
   vm.runInNewContext(source, { window, document, navigator, localStorage, CustomEvent,
-    setTimeout, clearTimeout, ...(sampleFetch ? { fetch: sampleFetch } : {}) },
+    setTimeout, clearTimeout, ...(timerAPI || {}), ...(clock ? { Date: clock } : {}), ...(sampleFetch ? { fetch: sampleFetch } : {}) },
     { filename: 'public/sounds.js' });
   return { sound: window.PokerSounds, calls, document, listeners, contexts: AudioContext.instances, navigator,
     audioSession };
@@ -522,3 +522,25 @@ test('a slow first sample falls back once, then later cues use the completed MP3
       'a later event uses the sample rather than remaining in fallback for the session');
     sound.dispose();
   });
+
+
+test('an early fallback timer reschedules the remaining millisecond for a hung sample', async () => {
+  let now = 1000, id = 0;
+  const timers = new Map();
+  const h = soundHarness({ sampleMode: 'hang', clock: { now: () => now }, timerAPI: {
+    setTimeout(fn, delay) { timers.set(++id, {fn,delay}); return id; },
+    clearTimeout(id) { timers.delete(id); }
+  } });
+  await h.sound.unlock();
+  assert.equal(h.sound.play('deal'), true);
+  const [fallbackId, fallback] = [...timers].find(([,timer]) => timer.delay === 800);
+  timers.delete(fallbackId);
+  now = 1799; fallback.fn();
+  assert.equal(h.calls.started.length, 0, 'do not synthesize before the fallback deadline');
+  const [nextId, next] = [...timers].find(([,timer]) => timer.delay === 1);
+  assert.ok(next, 'early callback must retain a future fallback');
+  timers.delete(nextId); now = 1800; next.fn();
+  assert.ok(h.calls.started.length > 0, 'deadline callback synthesizes the fresh cue');
+  h.sound.dispose();
+  assert.equal(timers.size, 0, 'dispose clears the rescheduled timer and cue cleanup');
+});

@@ -111,6 +111,7 @@ test('the production language change retains exact bet text and focus without ne
     ['#gift-recipient', { value: 'recipient-1', dataset: {}, options: [{ value: 'recipient-1' }] }],
     ['#seat-buyin-input', { value: '2000' }],
     ['#nickname-input', { value: 'Check & Rose' }],
+    ['#phone-input', { value: '+8613800138000' }],
     ['#room-code-input', { value: '123456' }],
     ['#enter-button', { textContent: '' }],
     ['#spectate-button', { textContent: '' }],
@@ -125,14 +126,15 @@ test('the production language change retains exact bet text and focus without ne
   const giftPicker = { recipientId: '' };
   const render = () => { newRaise = { value: '70', focus() { focused = true; } }; };
   Function('document', '$', 'state', 'i18n', 't', 'message', 'giftPicker', 'render',
-    'refreshSavedIdentity', 'refreshLiveEffectsLanguage', 'fetch', 'command', handlerSource)(
-    document, $, state, i18n, i18n.t, i18n.message, giftPicker, render, () => {}, () => {},
+    'refreshLiveEffectsLanguage', 'fetch', 'command', handlerSource)(
+    document, $, state, i18n, i18n.t, i18n.message, giftPicker, render, () => {},
     () => { fetches++; }, () => { commands++; });
   assert.equal(typeof handler, 'function');
   handler();
   assert.equal(newRaise.value, '0070');
   assert.equal(focused, true);
   assert.equal(fields.get('#nickname-input').value, 'Check & Rose');
+  assert.equal(fields.get('#phone-input').value, '+8613800138000');
   assert.equal(fields.get('#gift-count').value, '99');
   assert.equal(fields.get('#gift-recipient').value, 'recipient-1');
   assert.equal(state.newRunoutCards.size, 0);

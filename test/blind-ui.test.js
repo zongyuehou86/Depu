@@ -17,8 +17,7 @@ function productionFunction(name, dependencies) {
 function sidebarHarness() {
   const nodes = {
     '#room-summary': { innerHTML: '' }, '#room-controls': { innerHTML: '' },
-    '#secondary-presence': { innerHTML: '' }, '#switch-player': { disabled: false, title: '' },
-    '#recovery-display': { value: '' }
+    '#secondary-presence': { innerHTML: '' }, '#switch-player': { disabled: false, title: '' }
   };
   const $ = selector => nodes[selector] ?? null;
   const renderSidebar = productionFunction('renderSidebar', {

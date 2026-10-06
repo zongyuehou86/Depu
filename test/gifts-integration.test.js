@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 
+// Phone fixtures use the reserved fictional +1 202-555-01xx range.
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 async function freePort() {
@@ -86,12 +87,12 @@ test('gifts are private or room-wide by count, preserve chips, log locally, paus
       await once(socket, 'open');
       return effects;
     };
-    const code = (await request('POST', '/api/rooms', {})).data.roomCode;
-    const otherCode = (await request('POST', '/api/rooms', {})).data.roomCode;
-    const senderJoin = (await request('POST', `/api/rooms/${code}/join`, { nickname: '甲' })).data;
-    const receiverJoin = (await request('POST', `/api/rooms/${code}/join`, { nickname: '乙' })).data;
-    const observer = (await request('POST', `/api/rooms/${code}/join`, { nickname: '观众' })).data;
-    const other = (await request('POST', `/api/rooms/${otherCode}/join`, { nickname: '别桌' })).data;
+    const code = (await request('POST', '/api/rooms', { nickname: '甲', phone: '+12025550101' })).data.roomCode;
+    const otherCode = (await request('POST', '/api/rooms', { nickname: '别桌', phone: '+12025550104' })).data.roomCode;
+    const senderJoin = (await request('POST', `/api/rooms/${code}/join`, { nickname: '甲', phone: '+12025550101' })).data;
+    const receiverJoin = (await request('POST', `/api/rooms/${code}/join`, { nickname: '乙', phone: '+12025550102' })).data;
+    const observer = (await request('POST', `/api/rooms/${code}/join`, { nickname: '观众', phone: '+12025550103' })).data;
+    const other = (await request('POST', `/api/rooms/${otherCode}/join`, { nickname: '别桌', phone: '+12025550104' })).data;
     const senderId = senderJoin.state.hero.playerId;
     const receiverId = receiverJoin.state.hero.playerId;
     const sender = senderJoin.token, receiver = receiverJoin.token;
@@ -198,9 +199,9 @@ test('failed private gift log leaves chips and sequence unchanged', { timeout: 1
     });
     return { status: response.status, data: await response.json() };
   };
-  const code = (await request('POST', '/api/rooms', {})).data.roomCode;
-  const a = (await request('POST', `/api/rooms/${code}/join`, { nickname: '甲' })).data;
-  const b = (await request('POST', `/api/rooms/${code}/join`, { nickname: '乙' })).data;
+  const code = (await request('POST', '/api/rooms', { nickname: '甲', phone: '+12025550101' })).data.roomCode;
+  const a = (await request('POST', `/api/rooms/${code}/join`, { nickname: '甲', phone: '+12025550101' })).data;
+  const b = (await request('POST', `/api/rooms/${code}/join`, { nickname: '乙', phone: '+12025550102' })).data;
   for (const [token, seat] of [[a.token, 0], [b.token, 1]]) {
     assert.equal((await request('POST', `/api/rooms/${code}/command`, { type: 'sit', seat, buyIn: 2000 }, token)).status, 200);
   }
@@ -247,10 +248,10 @@ test('WAL recovery restores a deferred grand gift and pays it only after the pok
       });
       return { status: response.status, data: await response.json() };
     };
-    const code = (await request('POST', '/api/rooms', {})).data.roomCode;
+    const code = (await request('POST', '/api/rooms', { nickname: '按钮', phone: '+12025550101' })).data.roomCode;
     const joined = [];
-    for (const nickname of ['按钮', '赠送者', '接收者']) {
-      joined.push((await request('POST', `/api/rooms/${code}/join`, { nickname })).data);
+    for (const [index, nickname] of ['按钮', '赠送者', '接收者'].entries()) {
+      joined.push((await request('POST', `/api/rooms/${code}/join`, { nickname, phone: `+1202555010${index + 1}` })).data);
     }
     for (const [seat, person] of joined.entries()) {
       const buyIn = 2000;

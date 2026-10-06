@@ -10,7 +10,8 @@ import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 
-// Synthetic players only. Run against an isolated copy; public targets require
+// Synthetic players and reserved fictional +1 202-555-01xx phones only.
+// Run against an isolated copy; public targets require
 // an explicit flag. Tokens, private cards and server snapshots are never logged.
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const args = process.argv.slice(2);
@@ -48,7 +49,7 @@ if (baseURL) {
 }
 
 const players = Array.from({ length: 10 }, (_, seat) => ({ seat, nickname: `LoadPlayer${seat + 1}`,
-  token: '', socket: null, state: null, receipts: new Map(), lastMessageAt: null,
+  phone: `+120255501${String(seat + 1).padStart(2, '0')}`, token: '', socket: null, state: null, receipts: new Map(), lastMessageAt: null,
   lastStateAt: null, lastClose: null }));
 const connections = [];
 const metrics = { commands: [], broadcasts: [], stateBytes: [], health: [], totalWsBytes: 0,
@@ -415,9 +416,15 @@ try {
       await sleep(200);
     }
   })();
-  ({ roomCode } = await request('POST', '/api/rooms', { capacity: 10 }));
-  for (const player of players) {
-    const joined = await request('POST', `/api/rooms/${roomCode}/join`, { nickname: player.nickname });
+  const created = await request('POST', '/api/rooms', {
+    capacity: 10, nickname: players[0].nickname, phone: players[0].phone
+  });
+  roomCode = created.roomCode;
+  players[0].token = created.token;
+  for (const player of players.slice(1)) {
+    const joined = await request('POST', `/api/rooms/${roomCode}/join`, {
+      nickname: player.nickname, phone: player.phone
+    });
     player.token = joined.token;
   }
   await Promise.all(players.map(connect));

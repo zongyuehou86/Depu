@@ -51,7 +51,7 @@ test('35-second free clock buys a 10-second block without altering betting or bl
   room.command(smallBlind.token, { type: 'action', action: 'fold' });
   assert.equal(room.status, 'finished');
   assert.equal(smallBlind.hand.timebankEnabled, false);
-  assert.deepEqual(room.hand.result.winners[0], { seat: bigBlind.seat,
+  assert.deepEqual(room.hand.result.winners[0], { seat: bigBlind.seat, playerId: bigBlind.id,
     nickname: bigBlind.nickname, amount: 40, totalCommit: 20, netProfit: 20 });
   assert.equal(smallBlind.stack + bigBlind.stack, 4000);
 });
@@ -64,7 +64,7 @@ test('a player who pays timebank and wins by fold has net profit after the fee',
   room.command(smallBlind.token, { type: 'action', action: 'raise', amount: 40 });
   room.command(bigBlind.token, { type: 'action', action: 'fold' });
   assert.equal(room.status, 'finished');
-  assert.deepEqual(room.hand.result.winners[0], { seat: smallBlind.seat,
+  assert.deepEqual(room.hand.result.winners[0], { seat: smallBlind.seat, playerId: smallBlind.id,
     nickname: smallBlind.nickname, amount: 70, totalCommit: 40, netProfit: 20 });
   assert.equal(smallBlind.stack + bigBlind.stack, 4000);
 });

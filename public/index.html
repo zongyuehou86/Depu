@@ -4,10 +4,55 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#071a1b">
-  <meta name="description" content="和朋友联机打德州扑克。输入昵称与房间号即可入场或观战。" data-i18n-content="和朋友联机打德州扑克。输入昵称与房间号即可入场或观战。">
+  <meta name="description" content="和朋友联机打德州扑克。输入昵称、手机号与房间号即可入场或观战。" data-i18n-content="和朋友联机打德州扑克。输入昵称、手机号与房间号即可入场或观战。">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%23071a1b'/%3E%3Cpath d='M32 9C20 23 11 31 11 42a11 11 0 0 0 19 8v5h4v-5a11 11 0 0 0 19-8C53 31 44 23 32 9Z' fill='%23e3bf76'/%3E%3C/svg%3E">
   <title data-i18n="底池实验室 · 联机牌桌">底池实验室 · 联机牌桌</title>
-  <link rel="stylesheet" href="/styles.css">
+  <style>
+    html:not(.app-ready) #lobby-screen { pointer-events: none; opacity: .45; }
+    .loading-status { margin: 12px auto; padding: 14px 18px; max-width: 720px; border: 1px solid #436660; border-radius: 14px; background: #102d2b; color: #f2efdb; font: 14px/1.5 system-ui, sans-serif; }
+    .loading-status[hidden] { display: none; }
+    .loading-status progress { display: block; width: 100%; height: 9px; margin: 10px 0; accent-color: #e3bf76; }
+    .loading-status p { margin: 5px 0; }
+    .loading-status button { margin-top: 6px; min-height: 36px; padding: 5px 16px; cursor: pointer; }
+  </style>
+  <script>
+    // Lives in HTML so a stalled app.js still has an honest, usable loading state.
+    (() => {
+      const complete = new Set();
+      let initialized = false, slow = false, failed = false;
+      const translate = (key, params) => window.PokerI18n?.t(key, params) || key.replace(/\{(\w+)\}/g, (_, key) => params?.[key] ?? '');
+      function paint() {
+        const panel = document.getElementById('page-loading');
+        if (!panel) return;
+        const total = document.querySelectorAll('head script[src], head link[rel="stylesheet"]').length;
+        const ready = initialized && complete.size === total;
+        panel.hidden = ready;
+        document.documentElement.classList.toggle('app-ready', ready);
+        if (ready) { clearTimeout(slowTimer); return; }
+        const progress = document.getElementById('page-load-progress');
+        progress.max = Math.max(1, total);
+        progress.value = complete.size;
+        document.getElementById('page-load-label').textContent = translate('正在加载页面资源（{done}/{total} 项）', { done: complete.size, total });
+        document.getElementById('page-load-note').textContent = translate(failed ? '部分页面资源未能加载，请检查网络后重试。' : slow ? '下载比平时慢，正在等待网络。请不要连续刷新。' : '首次打开需要下载页面资源，之后会复用本地缓存。');
+        document.getElementById('page-load-retry').hidden = !failed && !slow;
+      }
+      document.addEventListener('load', (event) => {
+        if (event.target.matches?.('head script[src], head link[rel="stylesheet"]')) { complete.add(event.target); paint(); }
+      }, true);
+      window.addEventListener('error', (event) => {
+        if (!document.documentElement.classList.contains('app-ready') && (event.target.matches?.('head script[src], head link[rel="stylesheet"]') || event.error)) { failed = true; paint(); }
+      }, true);
+      const slowTimer = setTimeout(() => { slow = true; paint(); }, 10000);
+      document.addEventListener('DOMContentLoaded', paint);
+      document.addEventListener('click', (event) => {
+        if (event.target.id !== 'page-load-retry' || (!failed && !slow) || event.target.disabled) return;
+        event.target.disabled = true;
+        location.reload();
+      });
+      window.PokerPageLoad = { ready() { initialized = true; paint(); } };
+    })();
+  </script>
+  <link rel="stylesheet" href="/styles.css" media="print" onload="this.media='all'">
   <script src="/i18n.js" defer></script>
   <script src="/sounds.js" defer></script>
   <script src="/sound-events.js" defer></script>
@@ -24,15 +69,25 @@
     </header>
 
     <main>
+      <section id="page-loading" class="loading-status" role="status" aria-live="polite" aria-atomic="true">
+        <strong id="page-load-label">正在加载页面资源</strong>
+        <progress id="page-load-progress" max="8" value="0" aria-label="页面资源加载"></progress>
+        <p id="page-load-note">首次打开需要下载页面资源，之后会复用本地缓存。</p>
+        <button id="page-load-retry" type="button" hidden data-i18n="重试加载">重试加载</button>
+        <noscript>请启用 JavaScript 后进入房间。</noscript>
+      </section>
+      <section id="room-loading" class="loading-status" role="status" aria-live="polite" aria-atomic="true" hidden>
+        <strong id="room-load-label"></strong><progress id="room-load-progress" aria-label="进入房间" data-i18n-aria-label="进入房间"></progress>
+        <p id="room-load-note"></p><button id="room-load-retry" type="button" hidden data-i18n="重试连接">重试连接</button>
+      </section>
       <section id="lobby-screen" class="lobby-screen" aria-labelledby="lobby-title">
         <div class="lobby-card">
-          <div class="lobby-heading"><span class="eyebrow" data-i18n="私人联机牌桌">私人联机牌桌</span><h1 id="lobby-title" data-i18n="开一桌，或者加入朋友的牌局">开一桌，或者加入朋友的牌局</h1><p data-i18n="无需注册。输入昵称后，可自由选座，也可以一直观战。">无需注册。输入昵称后，可自由选座，也可以一直观战。</p></div>
+          <div class="lobby-heading"><span class="eyebrow" data-i18n="私人联机牌桌">私人联机牌桌</span><h1 id="lobby-title" data-i18n="开一桌，或者加入朋友的牌局">开一桌，或者加入朋友的牌局</h1><p data-i18n="无需注册。输入昵称和手机号后，可自由选座，也可以一直观战。">无需注册。输入昵称和手机号后，可自由选座，也可以一直观战。</p></div>
           <form id="lobby-form" novalidate>
             <div class="mode-switch" role="group" aria-label="进入方式" data-i18n-aria-label="进入方式"><button type="button" data-mode="create" class="mode-button selected" aria-pressed="true" data-i18n="开设房间">开设房间</button><button type="button" data-mode="join" class="mode-button" aria-pressed="false" data-i18n="加入房间">加入房间</button></div>
             <label class="field"><span data-i18n="你的昵称">你的昵称</span><input id="nickname-input" name="nickname" maxlength="18" autocomplete="nickname" placeholder="例如：阿河" data-i18n-placeholder="例如：阿河" required></label>
+            <label class="field"><span data-i18n="手机号">手机号</span><input id="phone-input" name="phone" type="tel" inputmode="tel" maxlength="32" autocomplete="off" spellcheck="false" placeholder="输入手机号" data-i18n-placeholder="输入手机号" required></label>
             <label id="room-code-field" class="field" hidden><span data-i18n="房间号">房间号</span><input id="room-code-input" name="roomCode" maxlength="8" inputmode="numeric" pattern="[0-9]{4,8}" autocomplete="off" placeholder="输入 4–8 位房间号" data-i18n-placeholder="输入 4–8 位房间号"></label>
-            <label id="recovery-field" class="field" hidden><span data-i18n="恢复码（可选）">恢复码（可选）</span><input id="recovery-input" name="recoveryCode" type="password" autocomplete="off" spellcheck="false" placeholder="换了网址，用它认回原座" data-i18n-placeholder="换了网址，用它认回原座"><small data-i18n="恢复码是本房间的身份凭证，不要发给其他人。">恢复码是本房间的身份凭证，不要发给其他人。</small></label>
-            <p id="saved-identity" class="saved-identity" hidden></p>
             <div id="create-options" class="field"><span data-i18n="牌桌人数">牌桌人数</span><select id="capacity-input" name="capacity" aria-label="牌桌人数" data-i18n-aria-label="牌桌人数"><option value="4" selected data-i18n="4 人">4 人</option><option value="5" data-i18n="5 人">5 人</option><option value="6" data-i18n="6 人">6 人</option><option value="7" data-i18n="7 人">7 人</option><option value="8" data-i18n="8 人">8 人</option><option value="9" data-i18n="9 人">9 人</option><option value="10" data-i18n="10 人">10 人</option></select></div>
             <p id="lobby-error" class="form-error" role="alert" hidden></p>
             <div class="lobby-actions"><button id="enter-button" class="button primary" type="submit" data-i18n="开设房间">开设房间</button><button id="spectate-button" class="button secondary" type="button" data-i18n="直接观战">直接观战</button></div>
@@ -55,7 +110,7 @@
               </div>
             </section>
             <div class="action-stack"><section id="action-panel" class="action-panel panel" aria-labelledby="action-title"><h2 id="action-title" class="visually-hidden" data-i18n="牌局操作">牌局操作</h2><div class="action-meta"><span id="to-call-label" class="muted-text"></span><span id="action-timer" class="action-timer" role="timer" hidden></span></div><div id="action-controls" class="action-controls"></div></section><div id="runout-lanes" class="runout-lanes" aria-label="两次跑马牌面" data-i18n-aria-label="两次跑马牌面" hidden></div></div>
-            <section class="panel table-panel"><div class="panel-title"><div><span class="eyebrow" data-i18n="座位与筹码">座位与筹码</span><h2 data-i18n="房间信息">房间信息</h2></div></div><div class="room-identity"><span class="eyebrow" data-i18n="当前房间">当前房间</span><div><strong id="room-code">——</strong><button id="copy-room" type="button" class="mini-button" data-i18n="复制房间号">复制房间号</button><button id="copy-link" type="button" class="mini-button" data-i18n="复制邀请链接">复制邀请链接</button></div></div><div id="room-summary" class="room-summary"></div><div id="room-controls" class="room-controls"></div><div id="secondary-room-actions" class="secondary-room-actions"><button id="leave-button" class="quiet-button" type="button" hidden data-i18n="返回大厅">返回大厅</button><span id="secondary-presence"></span></div><p id="table-notice" class="table-notice" aria-live="polite"></p><div class="recovery-control"><button id="copy-recovery" type="button" class="quiet-button" data-i18n="复制我的恢复码">复制我的恢复码</button><details id="recovery-details"><summary data-i18n="无法复制？手动查看">无法复制？手动查看</summary><input id="recovery-display" type="text" readonly aria-label="我的恢复码" data-i18n-aria-label="我的恢复码"></details><p class="small-note" data-i18n="换了网址，用它认回原座。恢复码相当于本房间身份凭证，请勿转发。">换了网址，用它认回原座。恢复码相当于本房间身份凭证，请勿转发。</p><button id="switch-player" type="button" class="quiet-button switch-button" data-i18n="切换玩家">切换玩家</button><p class="small-note" data-i18n="切换会先离开当前座位；请先保存旧身份的恢复码。">切换会先离开当前座位；请先保存旧身份的恢复码。</p></div></section>
+            <section class="panel table-panel"><div class="panel-title"><div><span class="eyebrow" data-i18n="座位与筹码">座位与筹码</span><h2 data-i18n="房间信息">房间信息</h2></div></div><div class="room-identity"><span class="eyebrow" data-i18n="当前房间">当前房间</span><div><strong id="room-code">——</strong><button id="copy-room" type="button" class="mini-button" data-i18n="复制房间号">复制房间号</button><button id="copy-link" type="button" class="mini-button" data-i18n="复制邀请链接">复制邀请链接</button></div></div><div id="room-summary" class="room-summary"></div><div id="room-controls" class="room-controls"></div><div id="secondary-room-actions" class="secondary-room-actions"><button id="leave-button" class="quiet-button" type="button" hidden data-i18n="返回大厅">返回大厅</button><span id="secondary-presence"></span></div><p id="table-notice" class="table-notice" aria-live="polite"></p><div class="player-controls"><button id="switch-player" type="button" class="quiet-button switch-button" data-i18n="切换玩家">切换玩家</button><p class="small-note" data-i18n="切换会先离开当前座位。">切换会先离开当前座位。</p></div></section>
           </div>
 
           <aside class="sidebar">
@@ -76,7 +131,7 @@
   <section id="gift-panel" class="gift-panel" role="dialog" aria-modal="true" aria-labelledby="gift-title" hidden>
     <div class="gift-panel-head"><div><span class="eyebrow" data-i18n="给朋友一点心意">给朋友一点心意</span><h2 id="gift-title" data-i18n="送礼物">送礼物</h2></div><button id="gift-close" class="gift-close" type="button" aria-label="关闭礼物面板" data-i18n-aria-label="关闭礼物面板">×</button></div>
     <div class="gift-panel-body">
-      <section class="gift-choice" aria-labelledby="gift-bouquet-title"><div class="gift-choice-head"><div><h3 id="gift-bouquet-title" data-i18n="玫瑰花束">玫瑰花束</h3><p data-i18n="50 筹码 / 束">50 筹码 / 束</p></div></div><div class="rose-types" role="group" aria-label="玫瑰颜色" data-i18n-aria-label="玫瑰颜色"><button type="button" data-rose-type="whiteRose" aria-pressed="true"><img src="/assets/gift-bouquet-classic.png" alt=""><span data-i18n="白玫瑰">白玫瑰</span></button><button type="button" data-rose-type="redRose" aria-pressed="false"><img src="/assets/gift-red-rose-classic.png" alt=""><span data-i18n="红玫瑰">红玫瑰</span></button></div>
+      <section class="gift-choice" aria-labelledby="gift-bouquet-title"><div class="gift-choice-head"><div><h3 id="gift-bouquet-title" data-i18n="玫瑰花束">玫瑰花束</h3><p data-i18n="50 筹码 / 束">50 筹码 / 束</p></div></div><div class="rose-types" role="group" aria-label="玫瑰颜色" data-i18n-aria-label="玫瑰颜色"><button type="button" data-rose-type="whiteRose" aria-pressed="true"><img loading="lazy" decoding="async" data-src="/assets/gift-bouquet-classic.png" alt=""><span data-i18n="白玫瑰">白玫瑰</span></button><button type="button" data-rose-type="redRose" aria-pressed="false"><img loading="lazy" decoding="async" data-src="/assets/gift-red-rose-classic.png" alt=""><span data-i18n="红玫瑰">红玫瑰</span></button></div>
         <label class="gift-field" for="gift-recipient"><span data-i18n="送给">送给</span><select id="gift-recipient" aria-label="花束接收者" data-i18n-aria-label="花束接收者"></select></label>
         <div class="gift-count-row"><div class="gift-presets" role="group" aria-label="花束数量" data-i18n-aria-label="花束数量"><button type="button" data-gift-count="1" aria-pressed="true" data-i18n="1 束">1 束</button><button type="button" data-gift-count="9" aria-pressed="false" data-i18n="9 束">9 束</button><button type="button" data-gift-count="99" aria-pressed="false" data-i18n="99 束">99 束</button></div><label class="gift-custom" for="gift-count"><span data-i18n="自定义">自定义</span><input id="gift-count" type="number" min="1" step="1" inputmode="numeric" value="1"></label></div>
         <div class="gift-total"><span data-i18n="合计">合计</span><strong id="gift-total" data-i18n="50 筹码">50 筹码</strong></div><p id="gift-hint" class="gift-hint"></p><button id="gift-send-bouquet" class="button primary full" type="button" data-i18n="送出花束">送出花束</button>

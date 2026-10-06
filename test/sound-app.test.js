@@ -222,3 +222,38 @@ test('a newly observed own turn alerts immediately in the background without rep
   playSoundCues([{ kind: 'turn', delay: 100 }]);
   assert.equal(heard.length, 1, 'the alert checks the latest turn before playing');
 });
+
+test('a new server epoch resets the sound baseline and stale epochs cannot stop later live cues', () => {
+  const now = Date.now();
+  const initial = { roomCode: '8301', stateEpoch: 'old', stateVersion: 90, handNo: 1,
+    status: 'playing', streetIndex: 0, actingSeat: 1, serverTime: now,
+    hero: { seat: 0, canAct: false }, board: [], events: [],
+    seats: [{ nickname: '甲' }, { nickname: '乙' }] };
+  const state = { roomCode: '8301', data: initial, clockOffset: 0, soundResumeAt: now,
+    soundTurnTimer: 7, newRunoutCards: new Set(), tableSettingsRoomCode: '8301', tableSettingsSeenId: 0 };
+  const soundPlanner = window.PokerSoundEvents.createPlanner();
+  soundPlanner.baseline(initial, now);
+  const heard = [], cleared = [];
+  let stops = 0, resets = 0;
+  const applyState = productionFunction('applyState', {
+    state, soundPlanner, sounds: { stop() { stops++; } },
+    preactions: { reset() { resets++; }, observe() {} }, clearTimeout: id => cleared.push(id),
+    render() {}, playSoundCues: cues => heard.push(...cues.map(cue => cue.kind)),
+    showToast() {}, t: value => value, Date, runPreaction() {}, tableSettingsNoticeText
+  });
+  const restored = { ...initial, stateEpoch: 'new', stateVersion: 2, serverTime: now - 1000,
+    events: [{ id: 1, handNo: 1, seat: 1, text: '乙 加注至 120', at: new Date(now - 1000).toISOString() }] };
+  applyState(restored);
+  assert.equal(state.data, restored);
+  assert.deepEqual(heard, [], 'restored actions are baselined silently');
+  assert.equal(stops, 1);
+  assert.equal(resets, 1);
+  assert.ok(cleared.includes(7), 'old queued turn reminder is canceled');
+  applyState({ ...restored, stateVersion: 3, serverTime: now - 500,
+    events: [...restored.events, { id: 2, handNo: 1, seat: 1, text: '乙 过牌', at: new Date(now - 500).toISOString() }] });
+  assert.deepEqual(heard, ['check'], 'new events sound despite the restart clock/version rollback');
+  applyState({ ...initial, stateVersion: 100, serverTime: now + 1000 });
+  assert.equal(state.data.stateEpoch, 'new');
+  assert.deepEqual(heard, ['check']);
+  assert.equal(stops, 1, 'a retired epoch cannot cancel live reminders');
+});

@@ -9,6 +9,8 @@ import { Room, GameError, capacityValue, ROOM_CLOSED_MESSAGE } from './room.js';
 import { cardLabel } from './engine.js';
 import { EquityPool } from './equity-pool.js';
 import { sendLatestState, clearSocketQueue, startHeartbeat } from './realtime.js';
+import { PublicAssets, PublicAssetError } from './public-assets.js';
+import { phoneLookup } from './phone-identity.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(here, 'public');
@@ -43,6 +45,7 @@ const expiryTimers = new Map();
 const recentRequests = new Map();
 const transactionIndex = new Map();
 const roomSocketHandlers = new WeakMap();
+const presenceTimers = new Map();
 // A just-created identity may be joined by a second tab before its first socket opens.
 const pendingWelcomes = new WeakMap();
 const equityPool = new EquityPool();
@@ -53,11 +56,7 @@ const roomOptions = { deferEquity: true };
 // a previously seen IP never sends another request.
 setInterval(() => {
   const cutoff = Date.now() - 60_000;
-  for (const [key, timestamps] of recentRequests) {
-    const recent = timestamps.filter(at => at > cutoff);
-    if (recent.length) recentRequests.set(key, recent);
-    else recentRequests.delete(key);
-  }
+  for (const [key, bucket] of recentRequests) if (bucket.at <= cutoff) recentRequests.delete(key);
 }, 60_000).unref();
 
 function sendJSON(response, status, value) {
@@ -83,14 +82,16 @@ function originAllowed(request) {
   } catch { return false; }
 }
 
-function rateLimit(request, scope, maximum) {
-  const ip = request.socket.remoteAddress || 'unknown';
-  const key = `${scope}:${ip}`;
+function rateLimit(request, scope, maximum, identity = null) {
+  const key = `${scope}:${identity ?? request.socket.remoteAddress ?? 'unknown'}`;
   const now = Date.now();
-  const history = (recentRequests.get(key) || []).filter(at => at > now - 60_000);
-  if (history.length >= maximum) throw new GameError('请求过于频繁，请稍后再试', 429);
-  history.push(now);
-  recentRequests.set(key, history);
+  if (!recentRequests.has(key) && recentRequests.size >= 10_000) {
+    recentRequests.delete(recentRequests.keys().next().value);
+  }
+  const prior = recentRequests.get(key);
+  const tokens = prior ? Math.min(maximum, prior.tokens + (now - prior.at) * maximum / 60_000) : maximum;
+  if (tokens < 1) throw new GameError('请求过于频繁，请稍后再试', 429);
+  recentRequests.set(key, { at: now, tokens: tokens - 1 });
 }
 
 async function readJSON(request) {
@@ -122,14 +123,17 @@ function persistSnapshot(code, snapshot, durable = false) {
   if (typeof code !== 'string' || !/^\d{4,8}$/.test(code)) throw new Error('房间编号无效');
   const target = path.join(dataDir, `${code}.json`);
   const temporary = `${target}.${process.pid}.${randomInt(1_000_000)}.tmp`;
+  let committed = false;
   try {
     writeFileSync(temporary, JSON.stringify(snapshot), { mode: 0o600, flush: durable });
     renameSync(temporary, target);
+    committed = true;
     if (durable) {
       const directory = openSync(dataDir, 'r');
       try { fsyncSync(directory); } finally { closeSync(directory); }
     }
   } catch (error) {
+    error.snapshotCommitted = committed;
     try { unlinkSync(temporary); } catch { /* Rename may already have succeeded. */ }
     throw error;
   }
@@ -428,8 +432,13 @@ function broadcast(room) {
   if (closeRoomIfInactive(room)) return;
   for (const member of room.members.values()) {
     if (!member.connections.size) continue;
-    let text;
-    try { text = JSON.stringify({ type: 'state', state: room.stateFor(member.token) }); }
+    const messages = new Map();
+    try {
+      for (const socket of member.connections) {
+        const compact = socket.compactState === true;
+        if (!messages.has(compact)) messages.set(compact, JSON.stringify({ type: 'state', state: room.stateFor(member.token, { compact }) }));
+      }
+    }
     catch (error) {
       if (error instanceof GameError && error.errorCode === 'ROOM_CLOSED') {
         closeRoomIfInactive(room);
@@ -438,7 +447,7 @@ function broadcast(room) {
       throw error;
     }
     for (const socket of member.connections) {
-      sendLatestState(socket, text);
+      sendLatestState(socket, messages.get(socket.compactState === true));
     }
   }
 }
@@ -507,6 +516,8 @@ function detachedSocketError(error) {
 }
 
 function clearRoomTimers(code) {
+  clearTimeout(presenceTimers.get(code));
+  presenceTimers.delete(code);
   for (const timers of [deadlines, nextHandTimers, pauseTimers, expiryTimers]) {
     clearTimeout(timers.get(code));
     timers.delete(code);
@@ -634,14 +645,75 @@ function scheduleDeadline(room) {
 function roomChanged(room) {
   if (closeRoomIfInactive(room)) return;
   persist(room);
+  publishRoomChange(room);
+}
+
+function publishRoomChange(room) {
   if (room.status === 'finished') {
     try { ensurePrivateHandRecord(room); }
     catch (error) { holdForRecordFailure(room, error); }
   }
+  for (const member of room.members.values()) member.publishedConnected = member.connections.size > 0;
   broadcast(room);
   room.persistenceFault = false;
   scheduleDeadline(room);
   scheduleEquity(room);
+}
+
+// Presence is transient. Refreshing a tab must not rewrite the room archive or
+// rebroadcast its history. A short disconnect/reconnect burst collapses to the
+// same final presence; a new socket receives its own initial state immediately.
+function queuePresence(room) {
+  if (presenceTimers.has(room.code)) return;
+  presenceTimers.set(room.code, setTimeout(() => {
+    presenceTimers.delete(room.code);
+    if (rooms.get(room.code) !== room || room.closedAt) return;
+    let changed = false;
+    for (const member of room.members.values()) {
+      const connected = member.connections.size > 0;
+      if (Boolean(member.publishedConnected) !== connected) changed = true;
+      member.publishedConnected = connected;
+    }
+    if (changed) { room.stateVersion++; broadcast(room); }
+  }, 250).unref());
+}
+
+function joinPhone(room, body) {
+  // onChange persists synchronously before broadcasting/returning the token.
+  // Keep the original objects for existing live sockets if the write fails.
+  const members = new Map(room.members), phoneMembers = new Map(room.phoneMembers);
+  const previous = [...room.members.values()].map(member => [member, member.nickname, member.celebrationGuest, member.phoneKey]);
+  const owner = room.ownerToken, version = room.stateVersion, onChange = room.onChange;
+  let member;
+  room.onChange = () => {};
+  try {
+    member = room.joinPhone(body.nickname, body.phone, body.token);
+    if (room.stateVersion !== version || room.identityPersistencePending) persist(room, true);
+    room.identityPersistencePending = false;
+  }
+  catch (error) {
+    if (error.snapshotCommitted) {
+      // The atomically replaced snapshot already contains the new identity.
+      // Keep it in memory and retry durability on the next same-phone join.
+      room.identityPersistencePending = true;
+      room.persistenceFault = true;
+      scheduleDeadline(room);
+      throw new GameError('房间身份正在保存，请稍后重试', 503);
+    }
+    room.members = members;
+    room.phoneMembers = phoneMembers;
+    room.ownerToken = owner;
+    room.stateVersion = version;
+    for (const [member, nickname, celebrationGuest, phoneKey] of previous) {
+      member.nickname = nickname;
+      member.celebrationGuest = celebrationGuest;
+      if (phoneKey == null) delete member.phoneKey;
+      else member.phoneKey = phoneKey;
+    }
+    throw error;
+  } finally { room.onChange = onChange; }
+  if (room.stateVersion !== version || room.persistenceFault) publishRoomChange(room);
+  return member;
 }
 
 function scheduleEquity(room) {
@@ -833,33 +905,7 @@ function makeCode() {
   throw new GameError('暂时无法创建房间，请重试', 503);
 }
 
-const contentTypes = {
-  '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml',
-  '.png': 'image/png', '.ico': 'image/x-icon', '.webp': 'image/webp'
-};
-
-function staticFile(request, response, pathname) {
-  if (request.method !== 'GET' && request.method !== 'HEAD') throw new GameError('不支持此请求', 405);
-  let decoded;
-  try { decoded = decodeURIComponent(pathname); } catch { throw new GameError('无效路径'); }
-  const relative = decoded === '/' ? 'index.html' : decoded.replace(/^\/+/, '');
-  const resolved = path.resolve(publicDir, relative);
-  if (!resolved.startsWith(`${publicDir}${path.sep}`) || !existsSync(resolved)) throw new GameError('页面不存在', 404);
-  const realFile = realpathSync(resolved);
-  if (!realFile.startsWith(`${realPublicDir}${path.sep}`) || !statSync(realFile).isFile()) {
-    throw new GameError('页面不存在', 404);
-  }
-  const body = readFileSync(resolved);
-  response.writeHead(200, {
-    'Content-Type': contentTypes[path.extname(resolved)] || 'application/octet-stream',
-    'Content-Length': body.length,
-    'Cache-Control': 'no-store',
-    'X-Content-Type-Options': 'nosniff',
-    'Referrer-Policy': 'no-referrer'
-  });
-  response.end(request.method === 'HEAD' ? undefined : body);
-}
+const publicAssets = new PublicAssets(publicDir);
 
 async function route(request, response) {
   if (!originAllowed(request)) throw new GameError('不允许跨站请求', 403);
@@ -876,16 +922,35 @@ async function route(request, response) {
     if (rooms.has(code) || existsSync(path.join(dataDir, `${code}.json`))) {
       throw new GameError('该房间号已存在', 409);
     }
-    const room = new Room(code, capacity, roomChanged, roomOptions);
+    const room = new Room(code, capacity, () => {}, roomOptions);
+    const member = room.joinPhone(body.nickname, body.phone);
+    // Commit the creator and room together: an empty-room race must not let
+    // another join become owner, and invalid inputs must not leave a room.
+    try { persist(room, true); }
+    catch (error) {
+      if (!error.snapshotCommitted) throw error;
+      room.onChange = roomChanged;
+      rooms.set(code, room);
+      room.identityPersistencePending = true;
+      room.persistenceFault = true;
+      scheduleDeadline(room);
+      const pending = new GameError('房间身份正在保存，请稍后重试', 503, 'IDENTITY_SAVE_PENDING');
+      pending.roomCode = code;
+      throw pending;
+    }
+    room.onChange = roomChanged;
     rooms.set(code, room);
-    persist(room);
-    return sendJSON(response, 201, { roomCode: code });
+    scheduleDeadline(room);
+    const effect = welcomeOnJoin(room, member, true, body.enter === true);
+    return sendJSON(response, 201, { roomCode: code, token: member.token,
+      state: room.stateFor(member.token, { compact: url.searchParams.get('compact') === '1' }),
+      ...(effect ? { effect } : {}) });
   }
   const match = /^\/api\/rooms\/(\d{4,8})\/(join|state|ledger|history|command)$/.exec(url.pathname);
   if (match) {
     const [, code, operation] = match;
-    // Tunnel traffic can share one loopback IP; this limits bursts without capping spectators.
-    if (operation === 'join' && request.method === 'POST') rateLimit(request, 'join', 300);
+    // Valid joins are limited by room-local phone identity below. Tunnel users
+    // often share one loopback IP, so one player must not spend the room's quota.
     const hasBody = request.method === 'POST' && (operation === 'join' || operation === 'command');
     if (hasBody && !rooms.has(code)) {
       // Reject archived rooms before waiting for a possibly slow request body,
@@ -897,16 +962,23 @@ async function route(request, response) {
     }
     const body = hasBody ? await readJSON(request) : null;
     const room = getRoom(code);
+    const compact = url.searchParams.get('compact') === '1';
     if (operation === 'join' && request.method === 'POST') {
-      const fresh = body.token == null;
-      const member = room.join(body.nickname, body.token);
-      const effect = welcomeOnJoin(room, member, fresh, body.enter === true);
-      return sendJSON(response, 200, { token: member.token, state: room.stateFor(member.token),
+      let key;
+      try { key = phoneLookup(room.phoneIdentity, room.code, body.phone); }
+      catch (error) { rateLimit(request, 'invalid-phone', 120); throw new GameError(error.message); }
+      rateLimit(request, 'phone-join', 120, `${room.code}:${key}`);
+      const before = room.members.size, version = room.stateVersion;
+      const member = joinPhone(room, body);
+      const fresh = room.members.size > before;
+      const effect = room.stateVersion !== version ? welcomeOnJoin(room, member, fresh, body.enter === true) : null;
+      return sendJSON(response, 200, { token: member.token, state: room.stateFor(member.token, { compact }),
         ...(effect ? { effect } : {}) });
     }
     const token = tokenFromRequest(request);
-    room.requireMember(token);
-    if (operation === 'state' && request.method === 'GET') return sendJSON(response, 200, { state: room.stateFor(token) });
+    const member = room.requireMember(token);
+    if (request.method === 'GET') rateLimit(request, 'room-read', 300, `${code}:${member.id}`);
+    if (operation === 'state' && request.method === 'GET') return sendJSON(response, 200, { state: room.stateFor(token, { compact }) });
     if (operation === 'ledger' && request.method === 'GET') return sendJSON(response, 200, { ledger: room.ledger() });
     if (operation === 'history' && request.method === 'GET') {
       const offset = Number(url.searchParams.get('offset') ?? 0);
@@ -914,23 +986,27 @@ async function route(request, response) {
       if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 500) {
         throw new GameError('记录分页参数无效');
       }
-      return sendJSON(response, 200, { total: room.history.length, items: room.history.slice(offset, offset + limit) });
+      return sendJSON(response, 200, { total: room.history.length, items: room.historyFor(offset, limit) });
     }
     if (operation === 'command' && request.method === 'POST') {
-      return sendJSON(response, 200, commandRoom(room, token, body));
+      rateLimit(request, 'room-command', 300, `${code}:${member.id}`);
+      const result = commandRoom(room, token, body);
+      if (compact) delete result.state.history;
+      return sendJSON(response, 200, result);
     }
     throw new GameError('不支持此请求', 405);
   }
   if (url.pathname.startsWith('/api/')) throw new GameError('接口不存在', 404);
-  return staticFile(request, response, url.pathname);
+  return publicAssets.serve(request, response, url);
 }
 
 const server = http.createServer((request, response) => {
   route(request, response).catch(error => {
-    const status = error instanceof GameError ? error.status : 500;
+    const status = (error instanceof GameError || error instanceof PublicAssetError) ? error.status : 500;
     if (status === 500) console.error(error);
     if (!response.headersSent) sendJSON(response, status, { error: error.message || '服务器内部错误',
       message: error.message || '服务器内部错误',
+      ...(error.errorCode === 'IDENTITY_SAVE_PENDING' && /^\d{4,8}$/.test(error.roomCode) ? { roomCode: error.roomCode } : {}),
       ...(error.errorCode ? { errorCode: error.errorCode } : {}) });
     else response.destroy();
   });
@@ -950,6 +1026,8 @@ server.on('upgrade', (request, socket, head) => {
     const token = url.searchParams.get('token');
     if (!token || !/^[A-Za-z0-9_-]{40,80}$/.test(token)) throw new GameError('凭证无效', 401);
     const member = room.requireMember(token);
+    rateLimit(request, 'socket', 120, `${room.code}:${member.id}`);
+    if (member.connections.size >= 8) throw new GameError('此玩家打开的页面过多，请先关闭其他页面', 429);
     webSockets.handleUpgrade(request, socket, head, ws => {
       if (closeRoomIfInactive(room)) {
         ws.on('error', detachedSocketError);
@@ -959,6 +1037,7 @@ server.on('upgrade', (request, socket, head) => {
         return;
       }
       member.connections.add(ws);
+      ws.compactState = url.searchParams.get('compact') === '1';
       ws.isAlive = true;
       const onPong = () => { ws.isAlive = true; };
       ws.on('pong', onPong);
@@ -966,6 +1045,7 @@ server.on('upgrade', (request, socket, head) => {
       const onMessage = message => {
         try {
           if (closeRoomIfInactive(room)) return;
+          rateLimit(request, 'socket-command', 300, `${room.code}:${member.id}`);
           const data = JSON.parse(String(message));
           commandRoom(room, token, data);
         } catch (error) {
@@ -975,10 +1055,7 @@ server.on('upgrade', (request, socket, head) => {
       const onClose = () => {
         member.connections.delete(ws);
         detach();
-        if (!room.closedAt) {
-          try { room.changed(); }
-          catch (error) { console.error(`房间 ${room.code} 连接状态保存失败: ${error.message}`); }
-        }
+        if (!room.closedAt) queuePresence(room);
       };
       const onError = () => {
         onClose();
@@ -998,7 +1075,8 @@ server.on('upgrade', (request, socket, head) => {
       ws.on('message', onMessage);
       ws.on('close', onClose);
       ws.on('error', onError);
-      room.changed();
+      sendLatestState(ws, JSON.stringify({ type: 'state', state: room.stateFor(token, { compact: ws.compactState }) }));
+      queuePresence(room);
     });
   } catch (error) {
     const status = error instanceof GameError ? error.status : 400;

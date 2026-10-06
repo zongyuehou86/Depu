@@ -135,7 +135,7 @@ test('the history API keeps full events and verifiable proofs after live summari
     assert.equal(response.status, 200);
     const archive = await response.json();
     assert.equal(archive.total, 2);
-    assert.deepEqual(archive.items, [room.history[0]]);
+    assert.deepEqual(archive.items, room.historyFor(0, 1));
     for (const proof of archive.items[0].fairness.visibleCardProofs) {
       assert.equal(verifyCardProof(archive.items[0].fairness.deckRoot, proof), true);
     }

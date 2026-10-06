@@ -98,7 +98,9 @@
     const controller = typeof AbortController === 'function' ? new AbortController() : null;
     if (controller) sampleControllers.add(controller);
     const options = { cache: 'default', ...(controller ? { signal: controller.signal } : {}) };
-    const request = Promise.resolve().then(() => fetch(url, options))
+    let assetUrl = url;
+    try { assetUrl = JSON.parse(document.getElementById?.('public-asset-versions')?.textContent || '{}')[url] || url; } catch { /* Optional asset manifest. */ }
+    const request = Promise.resolve().then(() => fetch(assetUrl, options))
       .then(response => response?.ok ? response.arrayBuffer() : null, () => null)
       .catch(() => null)
       .finally(() => { if (controller) sampleControllers.delete(controller); });
@@ -295,7 +297,13 @@
   function flushRecoveryCue() {
     if (!recoveryCue || sessionRecoveryTimer || context?.state !== 'running') return;
     if (ensureSample(SAMPLE_FILES[recoveryCue.kind]).status === 'loading' &&
-        Date.now() < recoveryCue.sampleFallbackAt) return;
+        Date.now() < recoveryCue.sampleFallbackAt) {
+      // Timers can run just before the wall-clock deadline. Keep the fallback
+      // scheduled rather than leaving a hung optional download silent forever.
+      clearTimeout(sampleFallbackTimer);
+      sampleFallbackTimer = setTimeout(flushRecoveryCue, Math.max(1, recoveryCue.sampleFallbackAt - Date.now()));
+      return;
+    }
     const saved = recoveryCue;
     clearRecoveryCue();
     if (!enabled || volume === 0 || disposed || Date.now() > saved.expiresAt ||
@@ -646,7 +654,7 @@
     announceSettings();
   }
 
-  preloadSampleBytes();
+  // Optional sounds begin on a real user gesture instead of every page refresh.
   document.addEventListener('pointerdown', onGesture, { capture: true, passive: true });
   document.addEventListener('touchend', onGesture, { capture: true, passive: true });
   document.addEventListener('click', onGesture, true);

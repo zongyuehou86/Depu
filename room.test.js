@@ -128,7 +128,7 @@ test('fold winner net profit is pot return minus own blind, before queued gifts 
   room.unload(bigBlind, randomUUID());
   room.command(smallBlind.token, { type: 'action', action: 'fold' });
   const winner = room.hand.result.winners[0];
-  assert.deepEqual(winner, { seat: 1, nickname: bigBlind.nickname,
+  assert.deepEqual(winner, { seat: 1, playerId: bigBlind.id, nickname: bigBlind.nickname,
     amount: 30, totalCommit: 20, netProfit: 10 });
   assert.equal(bigBlind.stack, 1960);
   assert.equal(room.history.at(-1).result.winners[0].netProfit, 10);

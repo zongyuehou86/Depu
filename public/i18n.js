@@ -6,24 +6,49 @@
   const LANGUAGES = new Set(['zh-CN', 'zh-TW', 'en']);
   // Each row is [Simplified Chinese source key, Traditional Chinese, English].
   const entries = [
+    ["正在加载页面资源（{done}/{total} 项）", "正在載入頁面資源（{done}/{total} 項）", "Loading page resources ({done}/{total})"],
+    ["部分页面资源未能加载，请检查网络后重试。", "部分頁面資源無法載入，請檢查網路後重試。", "Some page resources failed to load. Check your connection and retry."],
+    ["下载比平时慢，正在等待网络。请不要连续刷新。", "下載比平時慢，正在等候網路。請不要連續重新整理。", "Loading is slower than usual. Please avoid refreshing repeatedly."],
+    ["首次打开需要下载页面资源，之后会复用本地缓存。", "首次開啟需要下載頁面資源，之後會重用本機快取。", "The first visit downloads page resources. Later visits reuse the browser cache."],
+    ["重试加载", "重試載入", "Retry loading"],
+    ["重试连接", "重試連線", "Retry connection"],
+    ["不用刷新整个页面，可以在这里重试连接。", "不必重新整理整個頁面，可在此重試連線。", "Retry the connection here without refreshing the page."],
+    ["连接比平时慢，仍在等待服务器，请不要连续刷新。", "連線比平時慢，仍在等候伺服器，請不要連續重新整理。", "Still waiting for the server. Please avoid refreshing repeatedly."],
+    ["正在等待服务器确认，请勿重复点击或刷新。", "正在等候伺服器確認，請勿重複點擊或重新整理。", "Waiting for the server. Please do not click again or refresh."],
+    ["正在创建房间", "正在建立房間", "Creating room"],
+    ["正在确认房间身份", "正在確認房間身分", "Confirming your room identity"],
+    ["暂时无法进入房间", "暫時無法進入房間", "Unable to enter the room right now"],
+    ["正在恢复房间状态", "正在恢復房間狀態", "Restoring room state"],
+    ["连接中断，稍后自动重试", "連線中斷，稍後自動重試", "Connection interrupted. Retrying shortly"],
+    ["已同步，实时连接恢复中", "已同步，即時連線恢復中", "Synced; restoring live connection"],
+    ["同一设备的另一个页面正在连接，请稍候再试。", "同一裝置的另一個頁面正在連線，請稍候再試。", "Another tab on this device is connecting. Please try again shortly."],
+
     ['底池实验室 · 联机牌桌', '底池實驗室 · 線上牌桌', 'Pot Lab · Online Poker'],
     ['底池实验室', '底池實驗室', 'Pot Lab'],
     ['联机德州扑克', '線上德州撲克', 'Online Texas Hold’em'],
-    ['和朋友联机打德州扑克。输入昵称与房间号即可入场或观战。', '與朋友線上玩德州撲克。輸入暱稱和房間號碼即可入座或觀戰。', 'Play Texas Hold’em with friends. Enter a nickname and room code to sit or watch.'],
+    ['和朋友联机打德州扑克。输入昵称、手机号与房间号即可入场或观战。', '與朋友線上玩德州撲克。輸入暱稱、手機號碼和房間號碼即可入座或觀戰。', 'Play Texas Hold’em with friends. Enter a nickname, phone number and room code to sit or watch.'],
     ['准备连接', '準備連線', 'Connecting…'],
     ['私人联机牌桌', '私人線上牌桌', 'Private online table'],
     ['开一桌，或者加入朋友的牌局', '開一桌，或加入朋友的牌局', 'Start a table or join friends'],
-    ['无需注册。输入昵称后，可自由选座，也可以一直观战。', '無需註冊。輸入暱稱後，可自由選座，也能一直觀戰。', 'No signup. Enter a nickname, choose a seat, or keep watching.'],
+    ['无需注册。输入昵称和手机号后，可自由选座，也可以一直观战。', '無需註冊。輸入暱稱和手機號碼後，可自由選座，也能一直觀戰。', 'No signup. Enter a nickname and phone number, choose a seat, or keep watching.'],
     ['进入方式', '進入方式', 'How to enter'],
     ['开设房间', '開設房間', 'Create room'],
     ['加入房间', '加入房間', 'Join room'],
     ['你的昵称', '你的暱稱', 'Your nickname'],
+    ['手机号', '手機號碼', 'Phone number'],
+    ['输入手机号', '輸入手機號碼', 'Enter your phone number'],
+    ['请输入手机号。', '請輸入手機號碼。', 'Enter your phone number.'],
+    ['请输入有效的手机号', '請輸入有效的手機號碼', 'Enter a valid phone number.'],
+    ['请输入有效的手机号；境外号码请加国家区号', '請輸入有效的手機號碼；境外號碼請加國家區號', 'Enter a valid phone number. Include the country code for international numbers.'],
+    ['此手机号已关联本房间另一位玩家，请使用原玩家的手机号', '此手機號碼已連結本房間另一位玩家，請使用原玩家的手機號碼', 'This phone number belongs to another player in this room. Enter the original player’s phone number.'],
+    ['此玩家打开的页面过多，请先关闭其他页面', '此玩家開啟的頁面過多，請先關閉其他頁面', 'Too many tabs are open for this player. Close other tabs first.'],
+    ['房间身份正在保存，请稍后重试', '房間身分正在儲存，請稍後重試', 'Room identity is being saved. Please try again shortly.'],
+    ['已切换玩家。输入昵称和手机号即可加入。', '已切換玩家。輸入暱稱和手機號碼即可加入。', 'Player switched. Enter a nickname and phone number to join.'],
+    ['切换会先离开当前座位。', '切換前會離開目前座位。', 'Switching leaves your current seat.'],
+    ['复制失败，请重试。', '複製失敗，請重試。', 'Copy failed. Please try again.'],
     ['例如：阿河', '例如：阿河', 'For example: Alex'],
     ['房间号', '房間號碼', 'Room code'],
     ['输入 4–8 位房间号', '輸入 4–8 位房間號碼', 'Enter a 4–8 digit code'],
-    ['恢复码（可选）', '恢復碼（選填）', 'Recovery code (optional)'],
-    ['换了网址，用它认回原座', '換了網址，可用它取回原座位', 'Use this to recover your seat after the URL changes'],
-    ['恢复码是本房间的身份凭证，不要发给其他人。', '恢復碼是本房間的身分憑證，請勿分享給其他人。', 'Your recovery code identifies you in this room. Keep it private.'],
     ['牌桌人数', '牌桌人數', 'Table size'],
     ['4 人', '4 人', '4 players'],
     ['5 人', '5 人', '5 players'],
@@ -53,12 +78,7 @@
     ['复制房间号', '複製房間號碼', 'Copy room code'],
     ['复制邀请链接', '複製邀請連結', 'Copy invite link'],
     ['返回大厅', '返回大廳', 'Back to lobby'],
-    ['复制我的恢复码', '複製我的恢復碼', 'Copy my recovery code'],
-    ['无法复制？手动查看', '無法複製？手動查看', 'Can’t copy? Show code'],
-    ['我的恢复码', '我的恢復碼', 'My recovery code'],
-    ['换了网址，用它认回原座。恢复码相当于本房间身份凭证，请勿转发。', '換了網址，可用它取回原座位。恢復碼是本房間的身分憑證，請勿轉傳。', 'Use this code to recover your seat if the URL changes. Keep it private.'],
     ['切换玩家', '切換玩家', 'Switch player'],
-    ['切换会先离开当前座位；请先保存旧身份的恢复码。', '切換前會離開目前座位；請先保存舊身分的恢復碼。', 'Switching leaves your current seat. Save its recovery code first.'],
     ['按需查看', '按需查看', 'Show when needed'],
     ['补码与总盈亏', '補碼與總盈虧', 'Rebuys and profit'],
     ['发牌公开记录', '發牌公開紀錄', 'Dealing record'],
@@ -161,7 +181,6 @@
     ,['全押', '全押', 'ALL-IN']
     ,['已入座；本手不参与，从下一手开始发牌。', '已入座；本手不參與，下一手起發牌。', 'Seated. You join from the next hand.']
     ,['已全下，等待落后方选择跑马次数。', '已全下，等待落後方選擇跑馬次數。', 'All-in. Waiting for the trailing player.']
-    ,['已切换身份。输入新昵称即可加入；旧身份可凭恢复码找回。', '已切換身分。輸入新暱稱即可加入；舊身分可用恢復碼取回。', 'Player switched. Enter a new nickname; use the old recovery code to return.']
     ,['已弃牌', '已棄牌', 'Folded']
     ,['已暂时离席；从下一手起不发牌。', '已暫時離席；下一手起不發牌。', 'Sitting out from the next hand.']
     ,['已返回牌桌；连续暂离计数已清零，从下一手起参与。', '已返回牌桌；連續暫離次數已清零，下一手起參與。', 'Back at the table. Away count reset; join next hand.']
@@ -193,8 +212,6 @@
     ,['本轮', '本輪', 'Round']
     ,['欢迎可可姐', '歡迎可可姐', 'Welcome, Kelly']
     ,['正在翻第 {index} 次牌面。', '正在翻出第 {index} 次牌面。', 'Dealing board {index}.']
-    ,['此设备已保存「{name}」的身份；进入后将恢复原玩家。需要换人时，请进房后点击“切换玩家”。', '此裝置已儲存「{name}」的身分；進入後會恢復原玩家。要換人，請進房後按「切換玩家」。', 'This device saved {name}. Joining restores that player. To change, use Switch player in the room.']
-    ,['此设备已保存一位玩家的身份；进入后将恢复原玩家。需要换人时，请进房后点击“切换玩家”。', '此裝置已儲存一位玩家的身分；進入後會恢復原玩家。要換人，請進房後按「切換玩家」。', 'This device saved a player. Joining restores them. To change, use Switch player in the room.']
     ,['牌局进行中。', '牌局進行中。', 'Hand in progress.']
     ,['牌面已揭完', '牌面已全部翻出', 'Board complete']
     ,['玩家', '玩家', 'Player']
@@ -249,7 +266,6 @@
     ,['发牌时间（UTC）', '發牌時間（UTC）', 'Dealt at (UTC)']
     ,['可用筹码不足 2,000', '可用籌碼不足 2,000', 'Fewer than 2,000 chips available']
     ,['复制', '複製', 'Copy']
-    ,['复制失败，可展开“手动查看”选择恢复码。', '複製失敗，可展開「手動查看」選取恢復碼。', 'Copy failed. Open Show code to select your recovery code.']
     ,['已公开牌的证明', '已公開牌的證明', 'Proofs for revealed cards']
     ,['已填入全下金额 {amount}；点“{verb}”确认。', '已填入全下金額 {amount}；按「{verb}」確認。', 'All-in amount {amount} filled. Tap {verb} to confirm.']
     ,['已带走 {amount}', '已帶走 {amount}', 'Cashed out {amount}']
@@ -257,7 +273,6 @@
     ,['带入筹码须为至少 20 的整数。', '帶入籌碼須為至少 20 的整數。', 'Buy-in must be a whole number of at least 20 chips.']
     ,['座位', '座位', 'Seats']
     ,['当前 {amount}', '目前 {amount}', 'Now {amount}']
-    ,['恢复码已复制，请仅自己保存。', '恢復碼已複製，請只供自己保存。', 'Recovery code copied. Keep it private.']
     ,['房间号已复制。', '房間號碼已複製。', 'Room code copied.']
     ,['暂无筹码记录。', '目前沒有籌碼紀錄。', 'No chip records yet.']
     ,['本房间还没有发牌记录。', '本房間尚無發牌紀錄。', 'No hands have been dealt in this room yet.']

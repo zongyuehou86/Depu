@@ -12,6 +12,7 @@ import WebSocket from 'ws';
 import { Room } from '../room.js';
 import { cardLabel } from '../engine.js';
 
+// Phone fixtures use the reserved fictional +1 202-555-01xx range.
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 async function freePort() {
@@ -123,14 +124,14 @@ test('HTTP/WS privacy, rebuy, voluntary reveal and restart recovery', { timeout:
   };
 
   await startServer();
-  const created = await request('POST', '/api/rooms', { capacity: 4 });
+  const created = await request('POST', '/api/rooms', { capacity: 4, nickname: '甲', phone: '+12025550101' });
   assert.equal(created.status, 201);
   const code = created.data.roomCode;
   assert.equal((await fetch(`http://127.0.0.1:${port}/data/${code}.json`)).status, 404);
   assert.equal((await fetch(`http://127.0.0.1:${port}/server.js`)).status, 404);
   const tokens = [];
-  for (const name of ['甲', '乙', '旁观者']) {
-    const joined = await request('POST', `/api/rooms/${code}/join`, { nickname: name });
+  for (const [index, name] of ['甲', '乙', '旁观者'].entries()) {
+    const joined = await request('POST', `/api/rooms/${code}/join`, { nickname: name, phone: `+1202555010${index + 1}` });
     assert.equal(joined.status, 200);
     tokens.push(joined.data.token);
   }
@@ -141,7 +142,9 @@ test('HTTP/WS privacy, rebuy, voluntary reveal and restart recovery', { timeout:
   const secondPlayerSocket = await connect(code, a);
   const observerSocket = await connect(code, observer);
   for (let index = 0; index < 11; index++) {
-    const joined = await request('POST', `/api/rooms/${code}/join`, { nickname: `观战${index + 1}` });
+    const joined = await request('POST', `/api/rooms/${code}/join`, {
+      nickname: `观战${index + 1}`, phone: `+120255501${index + 20}`
+    });
     assert.equal(joined.status, 200);
     await connect(code, joined.data.token);
   }
@@ -243,7 +246,7 @@ test('HTTP/WS privacy, rebuy, voluntary reveal and restart recovery', { timeout:
   assert.equal(restored.fairness.deckRoot, snapshot.root);
   assert.equal(restored.actingSeat, snapshot.actor);
   assert.equal(restored.pot, snapshot.pot);
-  const resumed = await request('POST', `/api/rooms/${code}/join`, { nickname: '任何昵称', token: a });
+  const resumed = await request('POST', `/api/rooms/${code}/join`, { nickname: '甲', phone: '+12025550101', token: a });
   assert.equal(resumed.status, 200);
   assert.equal(resumed.data.state.hero.seat, 0);
   assert.equal(readdirSync(dataDir).filter(name => name.endsWith('.json')).length, 1);
@@ -275,10 +278,10 @@ test('failed private record blocks the next hand and startup retries it before r
     return { status: response.status, data: await response.json() };
   };
   await start();
-  const created = await request('POST', '/api/rooms', { capacity: 4 });
+  const created = await request('POST', '/api/rooms', { capacity: 4, nickname: '甲', phone: '+12025550101' });
   const code = created.data.roomCode;
-  const a = (await request('POST', `/api/rooms/${code}/join`, { nickname: '甲' })).data.token;
-  const b = (await request('POST', `/api/rooms/${code}/join`, { nickname: '乙' })).data.token;
+  const a = (await request('POST', `/api/rooms/${code}/join`, { nickname: '甲', phone: '+12025550101' })).data.token;
+  const b = (await request('POST', `/api/rooms/${code}/join`, { nickname: '乙', phone: '+12025550102' })).data.token;
   assert.equal((await request('POST', `/api/rooms/${code}/command`, { type: 'sit', seat: 0, buyIn: 2000 }, a)).status, 200);
   assert.equal((await request('POST', `/api/rooms/${code}/command`, { type: 'sit', seat: 1, buyIn: 2000 }, b)).status, 200);
   const started = await request('POST', `/api/rooms/${code}/command`, { type: 'nextHand' }, a);

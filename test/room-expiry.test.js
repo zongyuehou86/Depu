@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import { Room, ROOM_IDLE_MS } from '../room.js';
 
+// Phone fixtures use the reserved fictional +1 202-555-01xx range.
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 function stamp(value) { return typeof value === 'number' ? value : Date.parse(value); }
@@ -172,7 +173,7 @@ test('startup closes legacy idle snapshots but protects a recent hand and preser
     const closed = readSnapshot(app.dataDir, idle.code);
     assert.equal(closed.closeReason, 'inactive');
     assert.ok(stamp(closed.closedAt) >= Date.now() - 5000);
-    assert.equal((await app.request('POST', `/api/rooms/${idle.code}/join`, { nickname: '新人' })).status, 410);
+    assert.equal((await app.request('POST', `/api/rooms/${idle.code}/join`, { nickname: '新人', phone: '+12025550101' })).status, 410);
     const live = await app.request('GET', `/api/rooms/${recent.code}/state`, undefined, a.token);
     assert.equal(live.status, 200, JSON.stringify(live.data));
     assert.equal(live.data.state.status, 'playing');
@@ -187,7 +188,7 @@ test('startup closes legacy idle snapshots but protects a recent hand and preser
     await app.start();
     assert.equal(readSnapshot(app.dataDir, idle.code).closeReason, 'inactive');
     assert.deepEqual(readFileSync(recordPath), recordBytes);
-    assert.equal((await app.request('POST', '/api/rooms', { roomCode: idle.code })).status, 409);
+    assert.equal((await app.request('POST', '/api/rooms', { roomCode: idle.code, nickname: '新人', phone: '+12025550101' })).status, 409);
     assert.equal((await app.request('GET', `/api/rooms/${idle.code}/state`, undefined, idleMember.token)).status, 410);
   });
 
@@ -241,7 +242,7 @@ test('near-expiry timer closes every WebSocket tab and rejects every endpoint wi
       app.connect(room.code, a.token), app.connect(room.code, a.token), app.connect(room.code, watcher.token)
     ]);
     const originalExpiry = stamp(readSnapshot(app.dataDir, room.code).createdAt) + ROOM_IDLE_MS;
-    const lateJoin = await app.request('POST', `/api/rooms/${room.code}/join`, { nickname: '稍后加入' });
+    const lateJoin = await app.request('POST', `/api/rooms/${room.code}/join`, { nickname: '稍后加入', phone: '+12025550102' });
     assert.equal(lateJoin.status, 200);
     const rebuy = await app.request('POST', `/api/rooms/${room.code}/command`, {
       type: 'rebuy', amount: 2000, requestId: randomUUID()
@@ -277,7 +278,7 @@ test('near-expiry timer closes every WebSocket tab and rejects every endpoint wi
     assert.deepEqual(archived.members.filter(member => member.seat !== null)
       .map(member => [member.id, member.stack]), stacksAtClosure);
     for (const [method, route, body, token] of [
-      ['POST', `/api/rooms/${room.code}/join`, { nickname: '又一新人' }],
+      ['POST', `/api/rooms/${room.code}/join`, { nickname: '又一新人', phone: '+12025550103' }],
       ['GET', `/api/rooms/${room.code}/state`, undefined, a.token],
       ['GET', `/api/rooms/${room.code}/ledger`, undefined, a.token],
       ['GET', `/api/rooms/${room.code}/history`, undefined, a.token],
@@ -287,12 +288,12 @@ test('near-expiry timer closes every WebSocket tab and rejects every endpoint wi
       assert.equal(response.status, 410, `${method} ${route}: ${JSON.stringify(response.data)}`);
       assert.equal(response.data.errorCode, 'ROOM_CLOSED');
     }
-    assert.equal((await app.request('POST', '/api/rooms', { roomCode: room.code })).status, 409);
+    assert.equal((await app.request('POST', '/api/rooms', { roomCode: room.code, nickname: '甲', phone: '+12025550101' })).status, 409);
     await app.stop();
     await app.start();
     assert.equal(readSnapshot(app.dataDir, room.code).closeReason, 'inactive');
-    assert.equal((await app.request('POST', `/api/rooms/${room.code}/join`, { token: a.token })).status, 410);
-    assert.equal((await app.request('POST', '/api/rooms', { roomCode: room.code })).status, 409);
+    assert.equal((await app.request('POST', `/api/rooms/${room.code}/join`, { nickname: '甲', phone: '+12025550101', token: a.token })).status, 410);
+    assert.equal((await app.request('POST', '/api/rooms', { roomCode: room.code, nickname: '甲', phone: '+12025550101' })).status, 409);
     for (const [file, content] of privateContents) {
       assert.deepEqual(readFileSync(path.join(app.recordsDir, room.code, 'transactions', file)), content);
     }

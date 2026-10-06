@@ -184,7 +184,7 @@ test('missing, connecting, closing and closed sockets stay offline despite a suc
     if (readyState !== null) { h.open(); h.message({ type: 'heartbeat' }); h.state.socket.readyState = readyState; }
     await h.recoverRead();
     assert.equal(h.badge.className, 'connection offline');
-    assert.equal(h.badge.dataset.labelKey, '正在重连');
+    assert.equal(h.badge.dataset.labelKey, '已同步，实时连接恢复中');
   }
 });
 

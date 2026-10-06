@@ -21,7 +21,41 @@
   let toastTimer;
   const roomEffects = { seen: new Set(), queue: [], active: false, timer: null };
   const giftPicker = { open: false, recipientId: '', roseType: 'whiteRose', retries: new Map(), retryContext: '' };
-  const giftEffects = { seen: new Set(), active: new Map(), frame: 0, preload: null };
+  const giftEffects = { seen: new Set(), active: new Map(), frame: 0 };
+
+  const entryLoading = { active: false, stage: '', timer: null, retry: null };
+
+  function showEntryLoading(stage, { retry = null, slow = false } = {}) {
+    clearTimeout(entryLoading.timer);
+    entryLoading.active = true;
+    entryLoading.stage = stage;
+    entryLoading.retry = retry;
+    $('#room-loading').hidden = false;
+    $('#room-load-label').textContent = t(stage);
+    // Room requests do not expose a meaningful total. Keep this indeterminate.
+    $('#room-load-progress').hidden = Boolean(retry);
+    $('#room-load-progress').removeAttribute('value');
+    $('#room-load-note').textContent = t(retry ? '不用刷新整个页面，可以在这里重试连接。' : slow ? '连接比平时慢，仍在等待服务器，请不要连续刷新。' : '正在等待服务器确认，请勿重复点击或刷新。');
+    $('#room-load-retry').hidden = !retry;
+    $('#room-load-retry').disabled = false;
+    if (!retry && !slow) entryLoading.timer = setTimeout(() => {
+      if (entryLoading.active && entryLoading.stage === stage) showEntryLoading(stage, { slow: true });
+    }, 4000);
+  }
+
+  function hideEntryLoading() {
+    clearTimeout(entryLoading.timer);
+    entryLoading.active = false;
+    entryLoading.retry = null;
+    $('#room-loading').hidden = true;
+  }
+
+  function publicAsset(url) {
+    try {
+      const mapping = JSON.parse(document.getElementById('public-asset-versions')?.textContent || '{}');
+      return mapping[url] || url;
+    } catch { return url; }
+  }
 
   function syncSoundControls() {
     const settings = sounds?.getSettings?.() || { enabled: false, volume: 0, available: false };
@@ -273,6 +307,10 @@
     if (!state.data) return;
     updateGiftPicker(state.data);
     const panel = $('#gift-panel');
+    for (const image of panel.querySelectorAll('img[data-src]')) {
+      image.src = publicAsset(image.dataset.src);
+      image.removeAttribute('data-src');
+    }
     giftPicker.open = true;
     panel.hidden = false;
     $('#gift-backdrop').hidden = false;
@@ -347,7 +385,7 @@
       ? (grand ? '/assets/gift-red-rose-grand.png' : '/assets/gift-red-rose-classic.png')
       : (grand ? '/assets/gift-bouquet-grand.png' : '/assets/gift-bouquet-classic.png');
     const pending = effect.settlementPending ? t('待结算') : '';
-    return `<div class="gift-flight-scene" aria-hidden="true"><span class="gift-transfer gift-transfer-from">${safe(pending)} −${money(effect.cost)}</span><span class="gift-transfer gift-transfer-to">${safe(pending)} +${money(effect.cost)}</span><span class="gift-edge-label gift-edge-from"></span><span class="gift-edge-label gift-edge-to"></span><div class="gift-fly-bouquet ${grand ? 'gift-fly-grand' : ''}"><img src="${image}" alt=""><strong>${safe(t('×{quantity} · {amount} 筹码', { quantity: money(effect.quantity), amount: money(effect.cost) }))}${effect.settlementPending ? ` ${safe(t('（待结算）'))}` : ''}</strong></div></div>`;
+    return `<div class="gift-flight-scene" aria-hidden="true"><span class="gift-transfer gift-transfer-from">${safe(pending)} −${money(effect.cost)}</span><span class="gift-transfer gift-transfer-to">${safe(pending)} +${money(effect.cost)}</span><span class="gift-edge-label gift-edge-from"></span><span class="gift-edge-label gift-edge-to"></span><div class="gift-fly-bouquet ${grand ? 'gift-fly-grand' : ''}"><img src="${publicAsset(image)}" alt=""><strong>${safe(t('×{quantity} · {amount} 筹码', { quantity: money(effect.quantity), amount: money(effect.cost) }))}${effect.settlementPending ? ` ${safe(t('（待结算）'))}` : ''}</strong></div></div>`;
   }
 
   function clearGiftEffects() {
@@ -470,7 +508,7 @@
         quantity: money(effect.quantity), amount: money(effect.cost)
       });
       const red = effect.roseType === 'redRose';
-      node.innerHTML = `${effect.scope === 'grand' ? `<div class="gift-grand-scene" aria-hidden="true">${red ? '<div class="rose-petals"><i></i><i></i><i></i><i></i><i></i><i></i></div>' : ''}<img src="${red ? '/assets/gift-red-rose-grand.png' : '/assets/gift-bouquet-grand.png'}" alt=""><span class="gift-grand-overline">${red ? 'Tu es rosa mea rubra' : 'Tu es rosa mea alba'}</span><strong>${safe(t('{name} 致 {recipient}', { name: effect.sender?.nickname || t('玩家'), recipient: effect.recipient?.nickname || t('玩家') }))}</strong><span>${safe(t('×{quantity} 束 · {amount} 筹码', { quantity: money(effect.quantity), amount: money(effect.cost) }))}${effect.settlementPending ? ` · ${safe(t('手末结算'))}` : ''}</span></div>` : ''}${giftFlightMarkup(effect)}<span class="effect-accessible">${safe(message)}</span>`;
+      node.innerHTML = `${effect.scope === 'grand' ? `<div class="gift-grand-scene" aria-hidden="true">${red ? '<div class="rose-petals"><i></i><i></i><i></i><i></i><i></i><i></i></div>' : ''}<img src="${publicAsset(red ? '/assets/gift-red-rose-grand.png' : '/assets/gift-bouquet-grand.png')}" alt=""><span class="gift-grand-overline">${red ? 'Tu es rosa mea rubra' : 'Tu es rosa mea alba'}</span><strong>${safe(t('{name} 致 {recipient}', { name: effect.sender?.nickname || t('玩家'), recipient: effect.recipient?.nickname || t('玩家') }))}</strong><span>${safe(t('×{quantity} 束 · {amount} 筹码', { quantity: money(effect.quantity), amount: money(effect.cost) }))}${effect.settlementPending ? ` · ${safe(t('手末结算'))}` : ''}</span></div>` : ''}${giftFlightMarkup(effect)}<span class="effect-accessible">${safe(message)}</span>`;
     }
     $('#gift-effects').append(node);
     giftEffects.active.set(effect.id, { effect, node, phrase: '' });
@@ -540,6 +578,9 @@
   }
 
   async function request(path, { method = 'GET', body, token = state.token, timeoutMs = 8000 } = {}) {
+    // Live views need the current hand and sound events, not historical hand summaries.
+    if (/^\/api\/rooms(?:\/[^/?]+\/(?:join|state|command))?(?:\?|$)/.test(path) &&
+        !/[?&]compact=/.test(path)) path += `${path.includes('?') ? '&' : '?'}compact=1`;
     const headers = { Accept: 'application/json' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -563,6 +604,8 @@
           const error = new Error(data.message || data.error || t('请求失败（{status}）', { status: response.status }));
           error.status = response.status;
           error.errorCode = data.errorCode || data.code || '';
+          if (response.status === 503 && error.errorCode === 'IDENTITY_SAVE_PENDING' &&
+              typeof data.roomCode === 'string' && /^\d{4,8}$/.test(data.roomCode)) error.roomCode = data.roomCode;
           throw error;
         }
         return data;
@@ -572,17 +615,8 @@
     }
   }
 
-  function refreshSavedIdentity() {
-    const note = $('#saved-identity');
-    const code = $('#room-code-input').value.trim();
-    const nickname = stored(nickKey(code));
-    note.hidden = state.mode !== 'join' || !stored(tokenKey(code));
-    if (!note.hidden) note.textContent = nickname
-      ? t('此设备已保存「{name}」的身份；进入后将恢复原玩家。需要换人时，请进房后点击“切换玩家”。', { name: nickname })
-      : t('此设备已保存一位玩家的身份；进入后将恢复原玩家。需要换人时，请进房后点击“切换玩家”。');
-  }
-
   function setMode(mode) {
+    if (state.pending) return;
     state.mode = mode;
     for (const button of document.querySelectorAll('.mode-button')) {
       const selected = button.dataset.mode === mode;
@@ -590,12 +624,10 @@
       button.setAttribute('aria-pressed', String(selected));
     }
     $('#room-code-field').hidden = mode !== 'join';
-    $('#recovery-field').hidden = mode !== 'join';
     $('#create-options').hidden = mode !== 'create';
     $('#enter-button').textContent = t(mode === 'create' ? '开设房间' : '进入房间');
     $('#spectate-button').textContent = t(mode === 'create' ? '开房并观战' : '进入房间观战');
     $('#lobby-error').hidden = true;
-    refreshSavedIdentity();
   }
 
   function validateNickname() {
@@ -605,40 +637,49 @@
     return nickname;
   }
 
-  async function joinIdentity(code, nickname, manualToken) {
+  function validatePhone() {
+    const phone = $('#phone-input').value.trim();
+    if (!phone) throw new Error(t('请输入手机号。'));
+    return phone;
+  }
+
+  function rememberIdentity(code, nickname, joined) {
+    if (!joined.token) throw new Error(t('进入房间失败，请重试。'));
+    const realName = joined.state?.hero?.nickname || nickname;
+    remember('poker-last-nickname', realName);
+    remember('poker-last-room', code);
+    remember(tokenKey(code), joined.token);
+    remember(nickKey(code), realName);
+    return joined;
+  }
+
+  async function joinIdentity(code, nickname, phone) {
     const join = async () => {
       const savedToken = stored(tokenKey(code));
-      const token = manualToken || savedToken;
       let joined;
       try {
         joined = await request(`/api/rooms/${encodeURIComponent(code)}/join`, {
-          method: 'POST', body: { nickname, enter: true, ...(token ? { token } : {}) }, token: ''
+          method: 'POST', body: { nickname, phone, enter: true, ...(savedToken ? { token: savedToken } : {}) }, token: ''
         });
       } catch (cause) {
-        if (!manualToken && savedToken && cause.status === 401) {
+        if (savedToken && cause.status === 401) {
           forget(tokenKey(code));
           forget(nickKey(code));
-          joined = await request(`/api/rooms/${encodeURIComponent(code)}/join`, { method: 'POST', body: { nickname, enter: true }, token: '' });
+          joined = await request(`/api/rooms/${encodeURIComponent(code)}/join`, { method: 'POST', body: { nickname, phone, enter: true }, token: '' });
         } else throw cause;
       }
-      if (!joined.token) throw new Error(t('进入房间失败，请重试。'));
-      const realName = joined.state?.hero?.nickname || nickname;
-      remember('poker-last-nickname', realName);
-      remember('poker-last-room', code);
-      remember(tokenKey(code), joined.token);
-      remember(nickKey(code), realName);
-      return joined;
+      return rememberIdentity(code, nickname, joined);
     };
     // Same-origin tabs serialize their first join so the second can reuse the first token.
     if (navigator.locks?.request) return navigator.locks.request(`poker-join:${code}`, join);
     // Best-effort lease for browsers without Web Locks; a stale lease expires quickly.
     const key = `poker-join-lease:${code}`;
     const owner = `${Date.now()}-${Math.random()}`;
-    for (let attempt = 0; attempt < 24; attempt++) {
+    for (let attempt = 0; attempt < 100; attempt++) {
       let lease;
       try { lease = JSON.parse(stored(key) || 'null'); } catch { lease = null; }
       if (!lease || lease.until < Date.now()) {
-        remember(key, JSON.stringify({ owner, until: Date.now() + 5000 }));
+        remember(key, JSON.stringify({ owner, until: Date.now() + 12000 }));
         if (!stored(key)) return join();
         await new Promise((resolve) => setTimeout(resolve, 35));
         let confirmed;
@@ -654,13 +695,14 @@
       }
       await new Promise((resolve) => setTimeout(resolve, 120));
     }
-    return join();
+    throw new Error(t('同一设备的另一个页面正在连接，请稍候再试。'));
   }
 
   async function enterRoom() {
     if (state.pending || state.roomCode) return;
     state.resumeCancelled = true;
     state.pending = true;
+    showEntryLoading(state.mode === 'create' ? '正在创建房间' : '正在确认房间身份');
     $('#enter-button').disabled = true;
     $('#spectate-button').disabled = true;
     const error = $('#lobby-error');
@@ -668,28 +710,97 @@
     let code = '';
     try {
       const nickname = validateNickname();
+      const phone = validatePhone();
+      let joined;
       if (state.mode === 'create') {
         const capacity = Number($('#capacity-input').value);
-        const created = await request('/api/rooms', { method: 'POST', body: { capacity }, token: '' });
+        const created = await request('/api/rooms', { method: 'POST', body: { capacity, nickname, phone, enter: true }, token: '' });
         code = String(created.roomCode || '').toUpperCase();
+        // A known room is retried by phone rather than creating another room.
+        if (code) { state.mode = 'join'; $('#room-code-input').value = code; }
+        if (!code) throw new Error(t('未获取到房间号，请重试。'));
+        joined = rememberIdentity(code, nickname, created);
       } else {
         code = $('#room-code-input').value.trim().toUpperCase();
         if (!/^\d{4,8}$/.test(code)) throw new Error(t('房间号须为 4–8 位数字。'));
+        joined = await joinIdentity(code, nickname, phone);
       }
-      if (!code) throw new Error(t('未获取到房间号，请重试。'));
-      const enteredRecovery = state.mode === 'join' ? $('#recovery-input').value.trim() : '';
-      const joined = await joinIdentity(code, nickname, enteredRecovery);
-      $('#recovery-input').value = '';
+      state.pending = false;
       openRoom(code, joined.token, joined.state);
       if (joined.effect) queueRoomEffect(joined.effect);
     } catch (cause) {
+      if (!code && state.mode === 'create' && cause.errorCode === 'IDENTITY_SAVE_PENDING' &&
+          typeof cause.roomCode === 'string' && /^\d{4,8}$/.test(cause.roomCode)) {
+        code = cause.roomCode;
+        state.mode = 'join';
+        $('#room-code-input').value = code;
+      }
       if (code && isRoomClosedError(cause)) {
+        hideEntryLoading();
         closeExpiredRoom(code);
         return;
       }
       error.dataset.rawMessage = cause.message || '连接失败，请重试。';
       error.textContent = message(error.dataset.rawMessage);
       error.hidden = false;
+      showEntryLoading('暂时无法进入房间', { retry: () => enterRoom() });
+    } finally {
+      state.pending = false;
+      if (code && state.mode === 'join') { setMode('join'); error.hidden = !error.textContent; }
+      $('#enter-button').disabled = false;
+      $('#spectate-button').disabled = false;
+    }
+  }
+
+  async function resumeRoom(code, token) {
+    if (state.pending || state.roomCode) return;
+    state.resumeCancelled = false;
+    state.pending = true;
+    $('#enter-button').disabled = true;
+    $('#spectate-button').disabled = true;
+    $('#lobby-error').hidden = true;
+    showEntryLoading('正在恢复房间状态');
+    try {
+      let response;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          response = await request(`/api/rooms/${encodeURIComponent(code)}/state`, { token });
+          break;
+        } catch (cause) {
+          if (state.resumeCancelled) return;
+          if (cause.status && cause.status < 500 && cause.status !== 429) throw cause;
+          if (attempt === 2) throw cause;
+          showEntryLoading('连接中断，稍后自动重试');
+          await new Promise(resolve => setTimeout(resolve, 1500 * 2 ** attempt + Math.random() * 500));
+          if (state.resumeCancelled) return;
+          showEntryLoading('正在恢复房间状态');
+        }
+      }
+      if (!state.resumeCancelled) {
+        state.pending = false;
+        const initial = response.state || response;
+        if (initial.hero?.needsPhone) {
+          hideEntryLoading();
+          $('#room-code-input').value = code;
+          $('#nickname-input').value = initial.hero.nickname || stored(nickKey(code));
+          $('#phone-input').value = '';
+          setMode('join');
+          setConnection('准备连接');
+          $('#phone-input').focus();
+        } else openRoom(code, token, initial);
+      }
+    } catch (cause) {
+      if (state.resumeCancelled) return;
+      if (isRoomClosedError(cause)) { hideEntryLoading(); closeExpiredRoom(code); return; }
+      if (cause.status === 401) { forget(tokenKey(code)); forget(nickKey(code)); }
+      if ((cause.status === 401 || cause.status === 404) && stored('poker-last-room') === code) forget('poker-last-room');
+      const error = $('#lobby-error');
+      error.dataset.rawMessage = cause.message || '连接失败，请重试。';
+      error.textContent = message(error.dataset.rawMessage);
+      error.hidden = false;
+      if (cause.status === 401 || cause.status === 404) hideEntryLoading();
+      else showEntryLoading('暂时无法进入房间', { retry: () => resumeRoom(code, token) });
+      setConnection(cause.status ? '准备连接' : '连接中断', cause.status ? '' : 'offline');
     } finally {
       state.pending = false;
       $('#enter-button').disabled = false;
@@ -699,6 +810,7 @@
 
   function stopNetwork() {
     state.session += 1;
+    state.retiredStateEpochs = new Set();
     state.tableSettingsRoomCode = '';
     state.tableSettingsSeenId = 0;
     clearTimeout(state.soundTurnTimer);
@@ -723,6 +835,10 @@
     state.lastSyncAt = 0;
     state.socketSeenAt = 0;
     state.socketReceivedAt = 0;
+    state.socketFailures = 0;
+    state.socketRetryAt = 0;
+    state.syncFailures = 0;
+    state.nextSyncAt = 0;
     if (state.socket) {
       state.socket.onclose = null;
       state.socket.close();
@@ -747,13 +863,8 @@
     state.newRunoutCards = new Set();
     $('#board-cards').dataset.signature = '';
     state.clockOffset = Number(initial?.serverTime) ? Number(initial.serverTime) - Date.now() : 0;
-    if (!giftEffects.preload) {
-      giftEffects.preload = ['/assets/gift-bouquet-classic.png', '/assets/gift-bouquet-grand.png', '/assets/gift-red-rose-classic.png', '/assets/gift-red-rose-grand.png'].map((src) => {
-        const image = new Image();
-        image.src = src;
-        return image;
-      });
-    }
+    hideEntryLoading();
+    $('#phone-input').value = '';
     $('#lobby-screen').hidden = true;
     $('#room-screen').hidden = false;
     $('#leave-button').hidden = false;
@@ -767,6 +878,7 @@
   }
 
   function leaveRoom() {
+    hideEntryLoading();
     const oldRoom = state.roomCode;
     stopNetwork();
     state.roomCode = '';
@@ -775,8 +887,7 @@
     $('#room-screen').hidden = true;
     $('#lobby-screen').hidden = false;
     $('#leave-button').hidden = true;
-    $('#recovery-details').open = false;
-    $('#recovery-display').value = '';
+    $('#phone-input').value = '';
     if (stored('poker-last-room') === oldRoom) forget('poker-last-room');
     $('#room-code-input').value = oldRoom;
     setMode('join');
@@ -804,8 +915,7 @@
     forget(tokenKey(closedCode));
     forget(nickKey(closedCode));
     if (stored('poker-last-room') === closedCode) forget('poker-last-room');
-    $('#recovery-input').value = '';
-    refreshSavedIdentity();
+    $('#phone-input').value = '';
     state.pending = false;
     const error = $('#lobby-error');
     error.dataset.rawMessage = ROOM_CLOSED_MESSAGE;
@@ -840,10 +950,12 @@
       if (session !== state.session || code !== state.roomCode || token !== state.token) return;
       forget(tokenKey(code));
       forget(nickKey(code));
+      forget('poker-last-nickname');
       leaveRoom();
       $('#nickname-input').value = '';
+      $('#phone-input').value = '';
       $('#nickname-input').focus();
-      showToast(t('已切换身份。输入新昵称即可加入；旧身份可凭恢复码找回。'));
+      showToast(t('已切换玩家。输入昵称和手机号即可加入。'));
     } catch (cause) {
       if (session !== state.session || code !== state.roomCode || token !== state.token) return;
       if (isRoomClosedError(cause) && closeExpiredRoom(code, { session, token })) return;
@@ -859,6 +971,7 @@
   function syncConnection({ force = false } = {}) {
     if (!state.roomCode || !state.token) return;
     const now = Date.now();
+    if (force) { state.socketRetryAt = 0; state.nextSyncAt = 0; }
     const socket = state.socket;
     if (socket && now - state.socketSeenAt > 35_000) {
       // An OPEN socket can still be silent after a network change or device sleep.
@@ -875,13 +988,14 @@
     if (!state.socket || state.socket.readyState === WebSocket.CLOSED || state.socket.readyState === WebSocket.CLOSING) {
       connectSocket(state.session);
     }
-    if (force || !state.socket || state.socket.readyState !== WebSocket.OPEN || now - state.lastSyncAt >= 15_000) {
+    if ((force || now >= (state.nextSyncAt || 0)) &&
+        (force || !state.socket || state.socket.readyState !== WebSocket.OPEN || now - state.lastSyncAt >= 15_000)) {
       void refreshState();
     }
   }
 
   function connectSocket(session) {
-    if (session !== state.session || !state.roomCode) return;
+    if (session !== state.session || !state.roomCode || Date.now() < (state.socketRetryAt || 0)) return;
     if (state.socket && (state.socket.readyState === WebSocket.OPEN || state.socket.readyState === WebSocket.CONNECTING)) return;
     clearTimeout(state.retry);
     state.retry = null;
@@ -889,7 +1003,7 @@
     const token = state.token;
     let receivedState = false;
     const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${scheme}//${location.host}/ws?room=${encodeURIComponent(state.roomCode)}&token=${encodeURIComponent(state.token)}`;
+    const url = `${scheme}//${location.host}/ws?room=${encodeURIComponent(state.roomCode)}&token=${encodeURIComponent(state.token)}&compact=1`;
     const socket = new WebSocket(url);
     state.socket = socket;
     state.socketSeenAt = Date.now();
@@ -908,6 +1022,8 @@
       if (!packet || !['heartbeat', 'state', 'roomClosed', 'roomEffect', 'giftEffect', 'error'].includes(packet.type)) return;
       state.socketSeenAt = Date.now();
       state.socketReceivedAt = state.socketSeenAt;
+      state.socketFailures = 0;
+      state.socketRetryAt = 0;
       setConnection('实时在线', 'online');
       if (packet.type === 'heartbeat') return;
       if (packet.type === 'roomClosed' && packet.reason === 'inactive') {
@@ -940,7 +1056,10 @@
         sounds?.stop();
       }
       setConnection('正在重连', 'offline');
-      state.retry = setTimeout(() => connectSocket(session), 2500);
+      state.socketFailures = Math.min(5, (state.socketFailures || 0) + 1);
+      const delay = Math.min(30000, 1500 * 2 ** (state.socketFailures - 1)) + Math.random() * 750;
+      state.socketRetryAt = Date.now() + delay;
+      state.retry = setTimeout(() => connectSocket(session), delay);
     };
     socket.onerror = () => {
       if (!current()) return;
@@ -961,16 +1080,20 @@
     try {
       const fresh = await request(`/api/rooms/${encodeURIComponent(roomCode)}/state`, { token });
       if (session !== state.session || roomCode !== state.roomCode || token !== state.token) return;
+      state.syncFailures = 0;
+      state.nextSyncAt = 0;
       applyState(fresh.state || fresh);
       const realtimeAlive = state.socket?.readyState === WebSocket.OPEN && state.socketReceivedAt > 0 &&
         Date.now() - state.socketReceivedAt <= 35_000;
-      setConnection(realtimeAlive ? '实时在线' : '正在重连', realtimeAlive ? 'online' : 'offline');
+      setConnection(realtimeAlive ? '实时在线' : '已同步，实时连接恢复中', realtimeAlive ? 'online' : 'offline');
     } catch (cause) {
       if (session !== state.session || roomCode !== state.roomCode || token !== state.token) return;
       if (isRoomClosedError(cause)) {
         closeExpiredRoom(roomCode, { session, token });
         return;
       }
+      state.syncFailures = Math.min(5, (state.syncFailures || 0) + 1);
+      state.nextSyncAt = Date.now() + Math.min(30000, 1500 * 2 ** (state.syncFailures - 1)) + Math.random() * 750;
       preactions.reset();
       if (state.data) renderActions(state.data);
       setConnection('连接中断', 'offline');
@@ -1060,9 +1183,17 @@
     const serverTime = Number(fresh.serverTime);
     const previous = state.data;
     const previousTime = Number(previous?.serverTime);
+    const sameRoom = previous?.roomCode === fresh.roomCode;
+    const epoch = typeof fresh.stateEpoch === 'string' ? fresh.stateEpoch : '';
+    const previousEpoch = typeof previous?.stateEpoch === 'string' ? previous.stateEpoch : '';
+    const newEpoch = sameRoom && epoch && epoch !== previousEpoch;
+    // A restart begins a new version sequence. Late packets from a retired
+    // server instance must never switch the table back to that old sequence.
+    if (sameRoom && previousEpoch && !epoch) return;
+    if (newEpoch && state.retiredStateEpochs?.has(epoch)) return;
     const versioned = Number.isSafeInteger(fresh.stateVersion) && fresh.stateVersion >= 0;
     const previousVersioned = Number.isSafeInteger(previous?.stateVersion) && previous.stateVersion >= 0;
-    if (previous?.roomCode === fresh.roomCode && previousVersioned) {
+    if (sameRoom && previousVersioned && !newEpoch) {
       if (!versioned || fresh.stateVersion < previous.stateVersion) return;
       if (fresh.stateVersion === previous.stateVersion) {
         // Periodic synchronization may advance the clock without changing the table.
@@ -1075,15 +1206,26 @@
       }
     }
     // A late HTTP response must not undo a newer WS state or cancel its turn cue.
-    if (!(versioned && previousVersioned) && previous?.roomCode === fresh.roomCode && Number.isFinite(serverTime) && serverTime > 0 &&
+    if (!newEpoch && !(versioned && previousVersioned) && sameRoom && Number.isFinite(serverTime) && serverTime > 0 &&
         Number.isFinite(previousTime) && serverTime < previousTime) return;
+    if (newEpoch) {
+      state.retiredStateEpochs ||= new Set();
+      if (previousEpoch) state.retiredStateEpochs.add(previousEpoch);
+      while (state.retiredStateEpochs.size > 32) state.retiredStateEpochs.delete(state.retiredStateEpochs.values().next().value);
+      preactions.reset();
+      clearTimeout(state.soundTurnTimer);
+      state.soundTurnTimer = null;
+      state.soundResumeAt = 0;
+      sounds?.stop();
+      soundPlanner?.baseline(fresh, Number.isFinite(serverTime) && serverTime > 0 ? serverTime : Date.now());
+    }
     const cues = soundPlanner?.observe(fresh, { silent: soundSilent, since: state.soundResumeAt,
       now: Number.isFinite(serverTime) && serverTime > 0 ? serverTime : Date.now() + state.clockOffset }) || [];
     if (state.soundResumeAt && Number.isFinite(serverTime) && serverTime >= state.soundResumeAt &&
         (!Number.isFinite(previousTime) || serverTime >= previousTime)) state.soundResumeAt = 0;
     const knownCards = new Set((previous?.runout?.boards || [previous?.board || []]).flat());
     state.newRunoutCards = new Set();
-    if (previous && previous.handNo === fresh.handNo && Array.isArray(fresh.runout?.boards)) {
+    if (!newEpoch && previous && previous.handNo === fresh.handNo && Array.isArray(fresh.runout?.boards)) {
       fresh.runout.boards.forEach((board, boardIndex) => {
         if (!Array.isArray(board)) return;
         board.forEach((card, cardIndex) => {
@@ -1565,7 +1707,6 @@
     $('#room-controls').innerHTML = controls.join('');
     $('#switch-player').disabled = Boolean(data.pause) || (seated && cannotLeaveSeatDuringHand(data));
     $('#switch-player').title = data.pause ? t('礼物展示结束后可切换玩家') : $('#switch-player').disabled ? t('本手结束后可切换玩家') : '';
-    $('#recovery-display').value = state.token;
   }
 
   function renderLedger(data) {
@@ -1672,6 +1813,7 @@
     const recipient = $('#gift-recipient').value;
     const buyIn = $('#seat-buyin-input').value;
     const nickname = $('#nickname-input').value;
+    const phone = $('#phone-input').value;
     const roomCode = $('#room-code-input').value;
     i18n.applyStatic();
     $('#enter-button').textContent = t(state.mode === 'create' ? '开设房间' : '进入房间');
@@ -1684,10 +1826,10 @@
     $('#gift-recipient').dataset.signature = '';
     giftPicker.recipientId = recipient || giftPicker.recipientId;
     if (state.data) render();
-    refreshSavedIdentity();
     $('#gift-count').value = giftCount;
     $('#seat-buyin-input').value = buyIn;
     $('#nickname-input').value = nickname;
+    $('#phone-input').value = phone;
     $('#room-code-input').value = roomCode;
     if (raiseValue !== undefined && $('#raise-amount')) {
       $('#raise-amount').value = raiseValue;
@@ -1710,20 +1852,31 @@
       document.body.append(field);
       field.select();
       try {
-        showToast(document.execCommand('copy') ? success : t('复制失败，可展开“手动查看”选择恢复码。'));
-      } catch { showToast(t('复制失败，可展开“手动查看”选择恢复码。')); }
+        showToast(document.execCommand('copy') ? success : t('复制失败，请重试。'));
+      } catch { showToast(t('复制失败，请重试。')); }
       field.remove();
     }
   }
 
-  for (const button of document.querySelectorAll('.mode-button')) button.addEventListener('click', () => setMode(button.dataset.mode));
-  $('#room-code-input').addEventListener('input', refreshSavedIdentity);
+  for (const button of document.querySelectorAll('.mode-button')) button.addEventListener('click', () => {
+    if (state.pending) return;
+    hideEntryLoading();
+    setMode(button.dataset.mode);
+  });
+  $('#room-code-input').addEventListener('input', () => {
+    if (!state.pending) hideEntryLoading();
+  });
+  $('#room-load-retry').addEventListener('click', () => {
+    if (state.pending || !entryLoading.retry) return;
+    const retry = entryLoading.retry;
+    $('#room-load-retry').disabled = true;
+    void retry();
+  });
   $('#lobby-form').addEventListener('submit', (event) => { event.preventDefault(); void enterRoom(); });
   $('#spectate-button').addEventListener('click', () => { void enterRoom(); });
   $('#leave-button').addEventListener('click', leaveRoom);
   $('#copy-room').addEventListener('click', () => { void copyText(state.roomCode, t('房间号已复制。')); });
   $('#copy-link').addEventListener('click', () => { void copyText(`${location.origin}${location.pathname}?room=${encodeURIComponent(state.roomCode)}`, t('邀请链接已复制。')); });
-  $('#copy-recovery').addEventListener('click', () => { if (state.token) void copyText(state.token, t('恢复码已复制，请仅自己保存。')); });
   $('#switch-player').addEventListener('click', () => { void switchPlayer(); });
   $('#sound-open').addEventListener('click', () => {
     if (!$('#sound-panel').hidden) closeSoundPanel();
@@ -1798,7 +1951,6 @@
     if ($('#gift-send-sneak').disabled) return;
     if (await idempotentCommand({ type: 'sneak' })) closeGiftPicker();
   });
-  $('#recovery-display').addEventListener('focus', (event) => event.target.select());
   $('#fairness-content').addEventListener('click', (event) => {
     const button = event.target.closest('button[data-copy-proof]');
     if (button) void copyText(state.data?.fairness?.[button.dataset.copyProof] || '', t('发牌承诺已复制。'));
@@ -1924,23 +2076,7 @@
     $('#room-code-input').value = code;
     setMode('join');
     const token = stored(tokenKey(code));
-    if (token) {
-      request(`/api/rooms/${encodeURIComponent(code)}/state`, { token }).then((response) => {
-        if (!state.resumeCancelled) openRoom(code, token, response.state || response);
-      }).catch((cause) => {
-        if (state.resumeCancelled) return;
-        if (isRoomClosedError(cause)) {
-          closeExpiredRoom(code);
-          return;
-        }
-        if (cause.status === 401) { forget(tokenKey(code)); forget(nickKey(code)); refreshSavedIdentity(); }
-        if ((cause.status === 401 || cause.status === 404) && stored('poker-last-room') === code) forget('poker-last-room');
-        const error = $('#lobby-error');
-        error.dataset.rawMessage = cause.message || '暂时无法连接房间，请稍后刷新。';
-        error.textContent = message(error.dataset.rawMessage);
-        error.hidden = false;
-        setConnection(cause.status ? '准备连接' : '连接中断', cause.status ? '' : 'offline');
-      });
-    }
+    if (token) void resumeRoom(code, token);
   }
+  window.PokerPageLoad?.ready();
 })();

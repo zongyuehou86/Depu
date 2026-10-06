@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import WebSocket from 'ws';
 
+// Phone fixtures use the reserved fictional +1 202-555-01xx range.
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 async function freePort() {
@@ -158,9 +159,9 @@ test('closed rooms release Room and transaction objects while their archive rema
 
     await start();
     const code = '7801';
-    assert.equal((await request('POST', '/api/rooms', { roomCode: code })).status, 201);
-    const joinedA = await request('POST', `/api/rooms/${code}/join`, { nickname: '甲' });
-    const joinedB = await request('POST', `/api/rooms/${code}/join`, { nickname: '乙' });
+    assert.equal((await request('POST', '/api/rooms', { roomCode: code, nickname: '甲', phone: '+12025550101' })).status, 201);
+    const joinedA = await request('POST', `/api/rooms/${code}/join`, { nickname: '甲', phone: '+12025550101' });
+    const joinedB = await request('POST', `/api/rooms/${code}/join`, { nickname: '乙', phone: '+12025550102' });
     assert.equal(joinedA.status, 200);
     assert.equal(joinedB.status, 200);
     const a = joinedA.data.token;
@@ -197,7 +198,7 @@ test('closed rooms release Room and transaction objects while their archive rema
     assert.deepEqual(collected.retained, { room: false, index: false, transaction: false },
       'closed room and its transaction objects should be collectable');
     for (const [method, route, body, token] of [
-      ['POST', `/api/rooms/${code}/join`, { nickname: '新人' }],
+      ['POST', `/api/rooms/${code}/join`, { nickname: '新人', phone: '+12025550103' }],
       ['GET', `/api/rooms/${code}/state`, undefined, a],
       ['POST', `/api/rooms/${code}/command`, { type: 'rebuy', amount: 2000, requestId: randomUUID() }, a]
     ]) {
@@ -205,12 +206,12 @@ test('closed rooms release Room and transaction objects while their archive rema
       assert.equal(response.status, 410);
       assert.equal(response.data.errorCode, 'ROOM_CLOSED');
     }
-    assert.equal((await request('POST', '/api/rooms', { roomCode: code })).status, 409);
+    assert.equal((await request('POST', '/api/rooms', { roomCode: code, nickname: '甲', phone: '+12025550101' })).status, 409);
     await stopServer(child);
     child = null;
     await start();
-    assert.equal((await request('POST', `/api/rooms/${code}/join`, { nickname: '重启后' })).status, 410);
-    assert.equal((await request('POST', '/api/rooms', { roomCode: code })).status, 409);
+    assert.equal((await request('POST', `/api/rooms/${code}/join`, { nickname: '重启后', phone: '+12025550104' })).status, 410);
+    assert.equal((await request('POST', '/api/rooms', { roomCode: code, nickname: '甲', phone: '+12025550101' })).status, 409);
     assert.deepEqual(readFileSync(archivePath), archiveBytes);
     assert.deepEqual(readFileSync(path.join(transactionDir, transactionFiles[0])), transactionBytes);
   });

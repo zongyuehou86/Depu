@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Phone fixtures use the reserved fictional +1 202-555-01xx range.
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 async function freePort() {
@@ -63,12 +64,12 @@ test('spectator reservations apply next hand across HTTP restart without changin
       return { status: response.status, data: await response.json() };
     };
     await start();
-    const created = await request('POST', '/api/rooms', { capacity: 4 });
+    const created = await request('POST', '/api/rooms', { capacity: 4, nickname: '玩家甲', phone: '+12025550101' });
     assert.equal(created.status, 201);
     const code = created.data.roomCode;
     const tokens = [];
-    for (const nickname of ['玩家甲', '玩家乙', '观众', '候补']) {
-      const joined = await request('POST', `/api/rooms/${code}/join`, { nickname });
+    for (const [index, nickname] of ['玩家甲', '玩家乙', '观众', '候补'].entries()) {
+      const joined = await request('POST', `/api/rooms/${code}/join`, { nickname, phone: `+1202555010${index + 1}` });
       assert.equal(joined.status, 200);
       tokens.push(joined.data.token);
     }

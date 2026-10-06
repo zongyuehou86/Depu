@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 
+// Phone fixtures use the reserved fictional +1 202-555-01xx range.
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 async function freePort() {
@@ -83,14 +84,14 @@ test('Kelly/like effects reach only the current room, and do not replay on recon
       await once(socket, 'open');
       return { socket, effects };
     };
-    const roomA = (await request('POST', '/api/rooms', {})).data.roomCode;
-    const roomB = (await request('POST', '/api/rooms', {})).data.roomCode;
-    const observerA = (await request('POST', `/api/rooms/${roomA}/join`, { nickname: '观众甲' })).data.token;
-    const observerB = (await request('POST', `/api/rooms/${roomB}/join`, { nickname: '观众乙' })).data.token;
+    const roomA = (await request('POST', '/api/rooms', { nickname: '观众甲', phone: '+12025550101' })).data.roomCode;
+    const roomB = (await request('POST', '/api/rooms', { nickname: '观众乙', phone: '+12025550102' })).data.roomCode;
+    const observerA = (await request('POST', `/api/rooms/${roomA}/join`, { nickname: '观众甲', phone: '+12025550101' })).data.token;
+    const observerB = (await request('POST', `/api/rooms/${roomB}/join`, { nickname: '观众乙', phone: '+12025550102' })).data.token;
     const a = await connect(roomA, observerA);
     const b = await connect(roomB, observerB);
 
-    const joined = await request('POST', `/api/rooms/${roomA}/join`, { nickname: 'KeLlY', enter: true });
+    const joined = await request('POST', `/api/rooms/${roomA}/join`, { nickname: 'KeLlY', phone: '+12025550103', enter: true });
     assert.equal(joined.status, 200);
     assert.equal(joined.data.effect.trigger, 'join');
     assert.equal(joined.data.effect.style, 'fireworks');
@@ -104,7 +105,7 @@ test('Kelly/like effects reach only the current room, and do not replay on recon
     const kelly = joined.data.token;
     const own = await connect(roomA, kelly);
     assert.equal(own.effects.length, 0, 'welcome comes in join response before first socket');
-    const duplicate = await request('POST', `/api/rooms/${roomA}/join`, { nickname: 'ignored', token: kelly, enter: true });
+    const duplicate = await request('POST', `/api/rooms/${roomA}/join`, { nickname: 'KeLlY', phone: '+12025550103', token: kelly, enter: true });
     assert.equal(duplicate.data.effect, undefined, 'a second tab does not cause another welcome');
     const refreshed = await request('GET', `/api/rooms/${roomA}/state`, undefined, kelly);
     assert.equal(refreshed.data.effect, undefined);
@@ -159,20 +160,22 @@ test('Kelly/like effects reach only the current room, and do not replay on recon
     reconnect.socket.close();
     await once(reconnect.socket, 'close');
     const reentered = await request('POST', `/api/rooms/${roomA}/join`, {
-      nickname: 'ignored', token: kelly, enter: true
+      nickname: 'KeLlY', phone: '+12025550103', token: kelly, enter: true
     });
-    assert.equal(reentered.data.effect.trigger, 'join', 'explicit lobby reentry welcomes an offline guest');
-    await waitCount(a.effects, 5);
-    assert.deepEqual(a.effects[4], reentered.data.effect);
+    assert.equal(reentered.status, 200);
+    assert.equal(reentered.data.effect, undefined, 'unchanged lobby reentry does not welcome an offline guest again');
     const rapidRepeat = await request('POST', `/api/rooms/${roomA}/join`, {
-      nickname: 'ignored', token: kelly, enter: true
+      nickname: 'KeLlY', phone: '+12025550103', token: kelly, enter: true
     });
-    assert.equal(rapidRepeat.data.effect, undefined, 'rapid double-entry is suppressed before socket opens');
+    assert.equal(rapidRepeat.status, 200);
+    assert.equal(rapidRepeat.data.effect, undefined, 'unchanged double-entry does not replay a welcome');
+    await new Promise(resolve => setTimeout(resolve, 80));
+    assert.equal(a.effects.length, 4, 'unchanged entries never broadcast welcome effects');
 
-    const like = await request('POST', `/api/rooms/${roomA}/join`, { nickname: 'LiKe', enter: true });
+    const like = await request('POST', `/api/rooms/${roomA}/join`, { nickname: 'LiKe', phone: '+12025550104', enter: true });
     assert.equal(like.data.effect.text, '欢迎可可姐');
-    await waitCount(a.effects, 6);
-    const plain = await request('POST', `/api/rooms/${roomA}/join`, { nickname: 'Kelly #2', enter: true });
+    await waitCount(a.effects, 5);
+    const plain = await request('POST', `/api/rooms/${roomA}/join`, { nickname: 'Kelly #2', phone: '+12025550105', enter: true });
     assert.equal(plain.data.effect, undefined, 'only exact requested special nicknames count');
     const state = await request('GET', `/api/rooms/${roomA}/state`, undefined, observerA);
     assert.ok(!JSON.stringify(state.data.state.events).includes('欢迎可可姐'));
