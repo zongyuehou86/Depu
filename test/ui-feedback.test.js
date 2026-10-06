@@ -38,6 +38,7 @@ function actionHarness({ stack = 80, spendable = stack, toCall = 180, unit = 'ch
   };
   const state = { data, pending, clockOffset: 0 };
   const functions = productionFunctions(['defaultRaiseAmount', 'raiseSuggestion', 'bettingControlsHtml', 'renderActions'], {
+    updateControlsHtml: (element, html) => { element.innerHTML = html; },
     state, chips, preactions: window.PokerPreactions.createController(),
     $: selector => nodes[selector] ?? null, t: i18n.t, safe: String,
     chipAmount: (value, current) => chips.format(value, current),

@@ -21,6 +21,7 @@ function sidebarHarness() {
   };
   const $ = selector => nodes[selector] ?? null;
   const renderSidebar = productionFunction('renderSidebar', {
+    updateControlsHtml: (element, html) => { element.innerHTML = html; },
     $, t, safe, money: value => String(value), chipAmount: value => String(value),
     chips: { getBlind: data => data.bigBlind }, state: { token: 'secret' },
     canStart: () => true, cannotLeaveSeatDuringHand: () => false,

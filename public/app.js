@@ -1118,6 +1118,19 @@
           actionDeadline: data.actionDeadline, currentBet: data.currentBet
         } };
       }
+      if (payload.type === 'timebank' && !Object.hasOwn(payload, 'expectedTimebank') && state.data) {
+        const data = state.data;
+        payload = { ...payload, expectedTimebank: {
+          handNo: data.handNo, streetIndex: data.streetIndex, actingSeat: data.actingSeat,
+          actionDeadline: data.actionDeadline, currentBet: data.currentBet
+        } };
+      }
+      if (['runoutChoice', 'runoutResponse'].includes(payload.type) && !Object.hasOwn(payload, 'expectedRunout') && state.data) {
+        const data = state.data;
+        payload = { ...payload, expectedRunout: {
+          handNo: data.handNo, phase: data.runout?.phase, deadline: data.runout?.deadline
+        } };
+      }
       const response = await request(`/api/rooms/${encodeURIComponent(state.roomCode)}/command`, { method: 'POST', body: payload });
       if (session !== state.session || roomCode !== state.roomCode || token !== state.token) return false;
       if (response.state) applyState(response.state);
@@ -1595,6 +1608,45 @@
     return `${fold}${call}${checkFold}<div class="raise-control"><input id="raise-amount" class="amount-input" type="number" inputmode="${inputUnit === 'bb' ? 'decimal' : 'numeric'}" min="${chips.inputValue(minLegal, data)}" max="${chips.inputValue(max, data)}" step="${chips.inputStep(data)}" data-chip-unit="${inputUnit}" value="${safe(initial)}" data-action-context="${safe(raiseContext)}" aria-label="${safe(inputUnit === 'bb' ? t('输入{verb}BB数', { verb }) : t('输入{verb}筹码数', { verb }))}" ${disabled}>${inputUnit === 'bb' ? '<span class="raise-unit" aria-hidden="true">BB</span>' : ''}<button class="raise-step" data-step="-1" type="button" ${disabled} aria-label="${safe(t('减少50筹码'))}">−</button><button class="raise-step" data-step="1" type="button" ${disabled} aria-label="${safe(t('增加50筹码'))}">+</button><button class="button action-raise" data-action="raise" ${disabled}>${safe(verb)}</button></div><div class="raise-sizes">${timebank}${sizeButtons}<button class="size-button action-allin" data-fill="allin" type="button" title="${safe(t('先填入全下金额，再点{verb}确认', { verb }))}" ${disabled}>${safe(t('全押'))}</button></div>`;
   }
 
+  function updateControlsHtml(element, html) {
+    const template = element.ownerDocument.createElement('template');
+    template.innerHTML = html;
+    const syncChildren = (current, next) => {
+      const desired = [...next.childNodes];
+      for (let index = 0; index < desired.length; index++) {
+        const replacement = desired[index];
+        const existing = current.childNodes[index];
+        if (!existing) {
+          current.appendChild(replacement.cloneNode(true));
+        } else if (existing.nodeType !== replacement.nodeType || existing.nodeName !== replacement.nodeName ||
+            (existing.nodeType === 1 && existing.id !== replacement.id)) {
+          existing.replaceWith(replacement.cloneNode(true));
+        } else if (existing.nodeType === 1) {
+          const draftKeys = existing.id === 'raise-amount' ? ['data-action-context', 'data-chip-unit'] :
+            existing.id === 'big-blind-change' ? ['data-room-code', 'data-server-blind'] :
+            existing.id === 'capacity-change' ? ['data-room-code', 'data-server-capacity'] : null;
+          const keepDraft = draftKeys?.every(key => existing.getAttribute(key) === replacement.getAttribute(key));
+          const selectedValue = existing.value;
+          for (const attribute of [...existing.attributes]) {
+            if (!replacement.hasAttribute(attribute.name)) existing.removeAttribute(attribute.name);
+          }
+          for (const attribute of [...replacement.attributes]) {
+            if (existing.getAttribute(attribute.name) !== attribute.value) existing.setAttribute(attribute.name, attribute.value);
+          }
+          syncChildren(existing, replacement);
+          if (existing.nodeName === 'SELECT') existing.value = keepDraft ? selectedValue : replacement.value;
+          else if (!keepDraft && ['INPUT', 'TEXTAREA'].includes(existing.nodeName)) existing.value = replacement.value;
+        } else if (existing.nodeValue !== replacement.nodeValue) {
+          existing.nodeValue = replacement.nodeValue;
+        }
+      }
+      while (current.childNodes.length > desired.length) current.lastChild.remove();
+    };
+    // Keep live editor nodes attached so broadcasts do not dismiss a mobile keyboard.
+    // Drafts still reset when the turn, blind setting, room or display unit changes.
+    syncChildren(element, template.content);
+  }
+
   function renderActions(data) {
     const hero = data.hero || {};
     const seated = Number.isInteger(hero.seat);
@@ -1611,7 +1663,7 @@
     if (data.pause && Number(data.pause.endAt) > Date.now() + state.clockOffset) {
       panel.classList.remove('is-turn');
       title.textContent = t('礼物展示中');
-      controls.innerHTML = finished || runout ? '' : bettingControlsHtml(data);
+      updateControlsHtml(controls, finished || runout ? '' : bettingControlsHtml(data));
       panel.hidden = Boolean(finished || runout);
       return;
     }
@@ -1619,33 +1671,33 @@
       title.textContent = t(autoStood ? '已转为观战' : '本手已结束');
       const mySeat = seated ? data.seats?.[hero.seat] : null;
       const revealable = currentRevealable(hero, data.handNo) || (seated && Array.isArray(hero.cards) && hero.cards.length === 2 && !(Array.isArray(mySeat?.shownCards) && mySeat.shownCards.length) ? { handNo: data.handNo } : null);
-      controls.innerHTML = revealable ? `<button class="button secondary" data-command="reveal" data-hand="${Number(revealable.handNo)}">${safe(t('亮出我的牌'))}</button>` : '';
+      updateControlsHtml(controls, revealable ? `<button class="button secondary" data-command="reveal" data-hand="${Number(revealable.handNo)}">${safe(t('亮出我的牌'))}</button>` : '');
       panel.hidden = !revealable;
       return;
     }
     if (runout) {
       if (runout.phase === 'calculating') {
         title.textContent = t('正在计算胜率…');
-        controls.innerHTML = `<span class="muted-text">${safe(t('正在计算胜率…'))}</span>`;
+        updateControlsHtml(controls, `<span class="muted-text">${safe(t('正在计算胜率…'))}</span>`);
       } else if (runout.phase === 'paused') {
         title.textContent = t('跑马已暂停');
-        controls.innerHTML = `<span class="muted-text">${safe(t('本手跑马已暂停，请房主检查本机服务。'))}</span>`;
+        updateControlsHtml(controls, `<span class="muted-text">${safe(t('本手跑马已暂停，请房主检查本机服务。'))}</span>`);
       } else if (runout.phase === 'trailingVote') {
         title.textContent = t('选择跑马次数');
-        controls.innerHTML = hero.seat === runout.trailingSeat
+        updateControlsHtml(controls, hero.seat === runout.trailingSeat
           ? `<button class="button secondary" data-runout-choice="1">${safe(t('发一次'))}</button><button class="button primary" data-runout-choice="2">${safe(t('发两次'))}</button>`
-          : `<span class="muted-text">${safe(t('等待落后方选择一次或两次。'))}</span>`;
+          : `<span class="muted-text">${safe(t('等待落后方选择一次或两次。'))}</span>`);
       } else if (runout.phase === 'leaderVote') {
         title.textContent = t('决定是否跑两次');
-        controls.innerHTML = hero.seat === runout.leadingSeat
+        updateControlsHtml(controls, hero.seat === runout.leadingSeat
           ? `<button class="button primary" data-runout-response="true">${safe(t('同意跑两次'))}</button><button class="button secondary" data-runout-response="false">${safe(t('只跑一次'))}</button>`
-          : `<span class="muted-text">${safe(t('等待领先方决定。'))}</span>`;
+          : `<span class="muted-text">${safe(t('等待领先方决定。'))}</span>`);
       } else if (runout.phase === 'firstBoardPause') {
         title.textContent = t('第 1 次牌面已揭完');
-        controls.innerHTML = `<span class="muted-text">${safe(t('即将翻第 2 次牌面'))}</span>`;
+        updateControlsHtml(controls, `<span class="muted-text">${safe(t('即将翻第 2 次牌面'))}</span>`);
       } else {
         title.textContent = t(runout.phase === 'finished' ? '等待结算' : '正在跑马发牌');
-        controls.innerHTML = `<span class="muted-text">${safe(runout.phase === 'finished' ? t('牌面已揭完') : t('第 {index} 次牌面', { index: Math.max(0, Number(runout.boardIndex) || 0) + 1 }))}</span>`;
+        updateControlsHtml(controls, `<span class="muted-text">${safe(runout.phase === 'finished' ? t('牌面已揭完') : t('第 {index} 次牌面', { index: Math.max(0, Number(runout.boardIndex) || 0) + 1 }))}</span>`);
       }
       panel.hidden = false;
       return;
@@ -1657,9 +1709,9 @@
       const spendable = Math.max(0, Number(hero.spendableStack ?? me?.spendableStack ?? me?.stack) || 0);
       $('#to-call-label').textContent = toCall ? t('需跟注 {amount}', { amount: chipAmount(Math.min(toCall, spendable), data) }) : t('可免费过牌');
     }
-    controls.innerHTML = bettingControlsHtml(data);
+    updateControlsHtml(controls, bettingControlsHtml(data));
     if (canStart(data) && seated && !hero.sittingOut && !hero.pendingSitOut && data.nextHandAt) {
-      controls.innerHTML += `<button class="button primary" data-command="nextHand">${safe(t('立即开始牌局'))}</button>`;
+      updateControlsHtml(controls, controls.innerHTML + `<button class="button primary" data-command="nextHand">${safe(t('立即开始牌局'))}</button>`);
     }
   }
 
@@ -1704,7 +1756,7 @@
     const financial = hero.lastFinancialNotice;
     const financialText = financial?.message || (financial?.type === 'unloadCanceled' ? '本手结算后筹码不足，排队卸码已取消。' : '');
     if (financialText) controls.push(`<p class="small-note financial-note">${safe(message(financialText))}</p>`);
-    $('#room-controls').innerHTML = controls.join('');
+    updateControlsHtml($('#room-controls'), controls.join(''));
     $('#switch-player').disabled = Boolean(data.pause) || (seated && cannotLeaveSeatDuringHand(data));
     $('#switch-player').title = data.pause ? t('礼物展示结束后可切换玩家') : $('#switch-player').disabled ? t('本手结束后可切换玩家') : '';
   }

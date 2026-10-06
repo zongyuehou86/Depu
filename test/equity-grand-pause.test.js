@@ -220,7 +220,9 @@ async function waitUntil(read, predicate, timeout = 5000) {
   while (Date.now() < end) {
     const value = await read();
     if (predicate(value)) return value;
-    await new Promise(resolve => setTimeout(resolve, 25));
+    // Stay below the authenticated state endpoint's 300/minute allowance,
+    // including when waiting through the full ten-second gift pause.
+    await new Promise(resolve => setTimeout(resolve, 250));
   }
   throw new Error('expected server state did not arrive');
 }

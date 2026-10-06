@@ -43,6 +43,31 @@ function stateHarness(state) {
   return { applyState, renders: () => renders, resets: () => resets };
 }
 
+test('timebank and runout commands capture the displayed hand and decision before sending', async () => {
+  for (const type of ['timebank', 'runoutChoice', 'runoutResponse']) {
+    const state = initialState();
+    state.data.runout = { phase: type === 'runoutResponse' ? 'leaderVote' : 'trailingVote', deadline: 40_000 };
+    const before = state.data;
+    let sent;
+    const command = commandHarness(state, async (_url, options) => {
+      sent = options.body;
+      // The next state cannot change the decision snapshot already sent.
+      return { state: { ...before, handNo: before.handNo + 1 } };
+    });
+    const payload = type === 'timebank' ? { type, enabled: true } :
+      type === 'runoutChoice' ? { type, times: 2 } : { type, accept: true };
+    assert.equal(await command(payload), true);
+    if (type === 'timebank') assert.deepEqual(sent.expectedTimebank, {
+      handNo: before.handNo, streetIndex: before.streetIndex, actingSeat: before.actingSeat,
+      actionDeadline: before.actionDeadline, currentBet: before.currentBet
+    });
+    else assert.deepEqual(sent.expectedRunout, {
+      handNo: before.handNo, phase: before.runout.phase, deadline: before.runout.deadline
+    });
+    assert.equal(state.data.handNo, before.handNo + 1);
+  }
+});
+
 test('request timeouts cover stalled headers and stalled response bodies and abort the network', async () => {
   for (const stallBody of [false, true]) {
     let signal;

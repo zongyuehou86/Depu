@@ -1981,6 +1981,7 @@ export class Room {
     // A purchased block changes expectedAction.actionDeadline, so stale
     // preactions are rejected against the new state.
     if (data.type === 'action' || data.type === 'timebank') this.timeoutAction();
+    if (data.type === 'runoutChoice' || data.type === 'runoutResponse') this.advanceRunoutIfDue();
     if (data.type === 'action' && Object.hasOwn(data, 'expectedAction')) {
       const expected = data.expectedAction;
       if (!expected || typeof expected !== 'object' || Array.isArray(expected) ||
@@ -1988,6 +1989,27 @@ export class Room {
           expected.actingSeat !== this.hand?.actingSeat ||
           expected.actionDeadline !== this.hand?.actionDeadline ||
           expected.currentBet !== this.hand?.currentBet) {
+        throw new GameError('行动已更新，请重新选择。');
+      }
+    }
+    // A delayed switch or vote must still belong to the hand and decision
+    // displayed when it was sent. Older clients can omit these snapshots.
+    if (data.type === 'timebank' && Object.hasOwn(data, 'expectedTimebank')) {
+      const expected = data.expectedTimebank;
+      if (!expected || typeof expected !== 'object' || Array.isArray(expected) ||
+          expected.handNo !== this.handNo || expected.streetIndex !== this.hand?.street ||
+          expected.actingSeat !== this.hand?.actingSeat ||
+          expected.actionDeadline !== this.hand?.actionDeadline ||
+          expected.currentBet !== this.hand?.currentBet) {
+        throw new GameError('行动已更新，请重新选择。');
+      }
+    }
+    if ((data.type === 'runoutChoice' || data.type === 'runoutResponse') &&
+        Object.hasOwn(data, 'expectedRunout')) {
+      const expected = data.expectedRunout;
+      if (!expected || typeof expected !== 'object' || Array.isArray(expected) ||
+          expected.handNo !== this.handNo || expected.phase !== this.hand?.runout?.phase ||
+          expected.deadline !== this.hand?.runout?.deadline) {
         throw new GameError('行动已更新，请重新选择。');
       }
     }

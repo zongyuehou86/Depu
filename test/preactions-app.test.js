@@ -59,6 +59,7 @@ function renderHarness(data, preactions = createController()) {
     state, preactions, chips, chipAmount, raiseSuggestion, defaultRaiseAmount, $, t, safe, Date
   });
   const renderActions = productionFunction('renderActions', {
+    updateControlsHtml: (element, html) => { element.innerHTML = html; },
     state, preactions, bettingControlsHtml, $, t, safe, chipAmount, Date,
     isFinished: value => value.status === 'finished', currentRevealable: () => null,
     canStart: () => false
