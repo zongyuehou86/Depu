@@ -1,0 +1,536 @@
+{
+  "purpose": "Exact production application source snapshot; server was read-only throughout comparison and backup.",
+  "verifiedAt": "2026-10-09T12:37:34Z",
+  "productionUrl": "https://124.156.135.237/",
+  "releasePath": "/opt/depu/releases/20261006-live-fixes-4c5eef0",
+  "declaredRuntimeRevision": "4c5eef03e28755ccff8721b847bafe32464a3851",
+  "githubMainAtComparison": "7eaf11510c12fc4c9b81c7758da2d8fca4922ca4",
+  "sourceFiles": 100,
+  "sourceFingerprintSha256": "a181833d1f4a7587b751f4fb02585d2551ac5b08e0c419f80c8ba0a461e65a52",
+  "fingerprintAlgorithm": "SHA256 of UTF-8 JSON.stringify(sorted [path, SHA256(bytes), Git mode] rows); ascending path using < and >.",
+  "verification": "All application source, tests, dependency manifests, documentation, images and audio below were freshly hashed on the active server release and matched this snapshot. Executable launcher mode is preserved.",
+  "runtimeChangesMissingFromMain": [
+    "room.js",
+    "public/app.js"
+  ],
+  "notes": [
+    "Includes the deployed input-focus fix and stale timebank/runout command context guards and eight changed/new regression-test files.",
+    "README.md and docs/DEPLOY.md intentionally preserve the older exact deployed bytes. docs/PHONE-IDENTITY-DEPLOY.md exists on main but was not deployed, so is absent from this exact snapshot.",
+    "REVISION preserves the active release marker. This metadata file was added for the GitHub backup and is not a deployed application file.",
+    "Generated dependencies can be reproduced from package-lock.json; production service configuration and private state remain on the server."
+  ],
+  "excluded": [
+    "node_modules/",
+    "AppleDouble ._* filesystem metadata",
+    ".DS_Store",
+    ".git/",
+    "private room snapshots",
+    "hand records",
+    "credentials and identity keys",
+    "logs",
+    "private deployment/data backups",
+    "server-only service/environment configuration"
+  ],
+  "files": [
+    {
+      "path": ".gitattributes",
+      "sha256": "1a1dbe176bc233b499d35a57db7513f2941c99ab9759f177830c9149be99005b",
+      "gitmode": "100644"
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "32f713e33a6ffb592d956d1e44e9e33059701b98b3a8ded1a527fb7cc3198706",
+      "gitmode": "100644"
+    },
+    {
+      "path": "309a5c3c744aea8a94193128e6d24206.jpg",
+      "sha256": "e49886ba61e5e0ea783c79716cb60647c5c4a4326787b7c7b25830f97476ec02",
+      "gitmode": "100644"
+    },
+    {
+      "path": "README.md",
+      "sha256": "e3ded4a386b0f39300c692d39a9acb36e199aea5b61aae5bf4186810f898e5a4",
+      "gitmode": "100644"
+    },
+    {
+      "path": "ca74469eb7ffc8b5ddb203836bd5d035.jpg",
+      "sha256": "ccd8cd458396c1a2c708e6e20db4897b77337a4f8a187b8db020f78bd7718744",
+      "gitmode": "100644"
+    },
+    {
+      "path": "d6bf49c2d294a9e7dca752d9c51229c3.jpg",
+      "sha256": "46c9ee78dc53bfee18485d3d596bccb59a8e7617d44097ff24faf4e021271b62",
+      "gitmode": "100644"
+    },
+    {
+      "path": "docs/DEPLOY.md",
+      "sha256": "c12897d44d54aef8c68a2f2c322228cec6493a3c7e8812139f149ae1820870ce",
+      "gitmode": "100644"
+    },
+    {
+      "path": "docs/GIFT-ASSETS.md",
+      "sha256": "1bb4229c3a72d5988958f94fcebacde9cfa4a895d9bf175cd93362dbcd4f63c5",
+      "gitmode": "100644"
+    },
+    {
+      "path": "docs/screenshots/spectator-settings-ipad.png",
+      "sha256": "dca8cac105d9f1aede0a56fbf323fb3386bfce38d7a21cdcf7007d27525a7c1e",
+      "gitmode": "100644"
+    },
+    {
+      "path": "docs/screenshots/spectator-settings-mobile.png",
+      "sha256": "2c2fc4d6e271b2332b05aa6266e4c72d9a59670caba5491e36f2152d361212c3",
+      "gitmode": "100644"
+    },
+    {
+      "path": "engine.js",
+      "sha256": "9abdd1cd631fb1e3d0e3dece02e5ea3e0f0c7d40bf36f728b7c8c3347db43601",
+      "gitmode": "100644"
+    },
+    {
+      "path": "equity-pool.js",
+      "sha256": "5daf4857d753fc27f2df3210f128b276b90a42fd120fd9ee6d2b5e3ae78e31d7",
+      "gitmode": "100644"
+    },
+    {
+      "path": "equity-worker.js",
+      "sha256": "bf482a5a7f255332060f21c14e0d9a4ddff8f9826bb0bf98d8400d014eaa86d7",
+      "gitmode": "100644"
+    },
+    {
+      "path": "identity-display.js",
+      "sha256": "197a22a549ac618d06de90b059f3eb561d36182698bc7eda88a3fd7be684d20f",
+      "gitmode": "100644"
+    },
+    {
+      "path": "identity-display.test.js",
+      "sha256": "0835ca8004054e2f2f1e455daf9d8e07100957201a250fc1a5d44081a1a92e15",
+      "gitmode": "100644"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "11a4bb9319d518809ed71f99c0c744dd0fe1f3bc873fb657cae33b3611fc551a",
+      "gitmode": "100644"
+    },
+    {
+      "path": "package.json",
+      "sha256": "84f93717910dc2c3b8c793f8592cd2b3ff0ab17bd2b9855ca258ac2cabe25df0",
+      "gitmode": "100644"
+    },
+    {
+      "path": "phone-identity.js",
+      "sha256": "85b96a79ebdd7c0ac92b2546cec710f191e386f01b6b7a088bc2a1141dd21407",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public-assets.js",
+      "sha256": "b7f864a3454dd21178554146067d27641b0c504605d4d483a868699f7c59359a",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/app.js",
+      "sha256": "d3cf922853d5c9a53a15f86907b54b94faae66f89ff636059a24ad070d6abb9a",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/assets/gift-bouquet-classic.png",
+      "sha256": "fe6f99bf96700276c712e78057faf47e6b5b52086068017aee7bd09fa20a9358",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/assets/gift-bouquet-grand.png",
+      "sha256": "d7e2be1b204a94406394db29ec520f94a7ecd7e743a9a51b6376ba7fbcd1e329",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/assets/gift-red-rose-classic.png",
+      "sha256": "c9da3dfc846658fc63ef46b894af482040dfd83c089b3d5e7613cabe01d9ffe4",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/assets/gift-red-rose-grand.png",
+      "sha256": "f1591032b6212c01f790057444774771899d3631e9fb259a27f7d4272e19ba1a",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/audio/pokernow/beep.mp3",
+      "sha256": "29060d59c509b23fdf1b25891c55459b549b15988192f8b87162f4c3ca20c5cd",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/audio/pokernow/card-place.mp3",
+      "sha256": "ec073d96edba0c0d7e4008116eea0dfb109c940889ba4b36e9e66d63c25ce029",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/audio/pokernow/chat-beep.mp3",
+      "sha256": "2a12e3c71a3d72a410eb63783080ed4caa9787eb5841453c1394dc6aa17e3f91",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/audio/pokernow/chips.mp3",
+      "sha256": "872358357392bdcd8c43e48deb27d0b0d6166e7eab2724550c2a1511a718e9b1",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/audio/pokernow/fold.mp3",
+      "sha256": "4f872cece6337aa424666d420caf6c76e1df202cf2b1b32f42586a8c9b9b5eef",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/audio/pokernow/sources.json",
+      "sha256": "328c0f89064a877a858993b765d7a4f5021574328134330abd08878e82f5ead3",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/audio/pokernow/two-taps.mp3",
+      "sha256": "4afa2ce7efebcacf97e2747de468ce437c4ad6d6fc87ef38eabdc8fe9754054a",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/audio/pokernow/warning-beep.mp3",
+      "sha256": "10dc527c677e37eb1982de06e9c84e5f75c29a4a8bca085548f1b16b82e6b5c1",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/audio/pokernow/winner.mp3",
+      "sha256": "329ec6acc14d13e7213f04e83a0aca7c7152900cd7da8665ed68149e468b168d",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/chip-display.js",
+      "sha256": "b0a0848e8d21fc81e0f4ed8d31a36fcddef228cc54c676c71b30b512afe0e215",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/i18n.js",
+      "sha256": "d8908bd7095dcceca0e43c60ea1a2d38b385b077e8320f6991e5c45ec03d1cea",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/index.html",
+      "sha256": "99ef4fdcaff351926792c56bcefc35b2b5742312031ad1a63649486cd769bcb6",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/preactions.js",
+      "sha256": "41ab1d9dbb5f91c416dc3c9023d101f14646f25dcba171fce09f4e2c59d22fbc",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/sound-events.js",
+      "sha256": "982d5e42cf95319d31143afdaa56ba6806b1bee3b65eca789b3083f57433adf1",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/sounds.js",
+      "sha256": "cb25af36a50853531e0ab8f7819036837b7288f4b8237f0b1062b6df255414f6",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/styles.css",
+      "sha256": "b8492f8849566b43b8a24e93304ae16193744657fb28d2e3627c599b1e42bc8c",
+      "gitmode": "100644"
+    },
+    {
+      "path": "public/viewport-guard.js",
+      "sha256": "c6a5a9dc30ae6e4cc712ae0bb3d2f76553288106740ca70c0a67b5b1f9a0fdeb",
+      "gitmode": "100644"
+    },
+    {
+      "path": "realtime.js",
+      "sha256": "7d2ad64242a3735361fee977f76b3df4a08ca68d53bc954a7faf24e17b167071",
+      "gitmode": "100644"
+    },
+    {
+      "path": "room.js",
+      "sha256": "b1991b495312776334efdce7aaba97e633b8fa8474304022b9697efc69682e81",
+      "gitmode": "100644"
+    },
+    {
+      "path": "room.test.js",
+      "sha256": "1d918f64b7af1c988c01997a0970e30eaf88e91a49731734deef027b23842134",
+      "gitmode": "100644"
+    },
+    {
+      "path": "scripts/load-ten-players.mjs",
+      "sha256": "4db83dd95326f46b064b5ca59e486e42c887c0985e2fb0bec229658c6e90b4bd",
+      "gitmode": "100644"
+    },
+    {
+      "path": "server.js",
+      "sha256": "93e1fd88207dda4376696230138024bb52ca4a4936a4d97ccd267fc4818bdfaa",
+      "gitmode": "100644"
+    },
+    {
+      "path": "start-online.command",
+      "sha256": "78b895039be02e5e592862456e31b37cad453ccd96e5ba847ac31d1c2df9a0ce",
+      "gitmode": "100755"
+    },
+    {
+      "path": "test/action-context.test.js",
+      "sha256": "2a389cc42e3a6ce2e8660dbd1cdf06e5b3b782cb9c8eea68a296aa3267922d40",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/action-grace.test.js",
+      "sha256": "40fd940a171acc50cdd9af99785fb13722892b14d24bf66f55055e753bb8f578",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/blind-ui.test.js",
+      "sha256": "1abda0c970db50449f6cf35a38cee54e29496fb06bd833fae306e26b82895073",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/blinds.integration.test.js",
+      "sha256": "deefde0e2fa438e08c93a1bca7c965d0831756b5d475f508a7a92788696d2758",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/blinds.test.js",
+      "sha256": "7809d6dc7644d0f26c692073fcc155673f314f6b27288a4281c590b921acae6d",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/chip-display.test.js",
+      "sha256": "7de45bc18c02ecd36b1866990e0940cce0a6daf05b2b61855dbcbfe1254abb9a",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/command-context.integration.test.js",
+      "sha256": "78e51fd3f25e4051df326a5f17232c74458ef72a169f5d7a988afabd4c3ff385",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/connection-recovery.test.js",
+      "sha256": "f3d641cb8ac74eaefb6cc0c2e528b4b9bce002936f0b9c6a0fad138df258dd8f",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/effects.integration.test.js",
+      "sha256": "0130c0c0d1aeb2aeb7a8beddfba87a7ea1d18e9019f442989a71b81da3cf09e9",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/engine.test.js",
+      "sha256": "88432999a59e6852ae4b79741269c016f537ffc65aa61c0bc5603edb39485a80",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/equity-grand-pause.test.js",
+      "sha256": "d79c13d2e1c56fe7604c28c1f2e99776853eb860e8a9e643c3a3af88153c292d",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/equity-pool.test.js",
+      "sha256": "7d42d02a3beaf4a4b1f5d4226cf8b56f17fe3cc4c3ce081103f0593e8247c63c",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/gifts-integration.test.js",
+      "sha256": "6b3df97b1cb80e6be8a882d23612ab564e40e66e027365d08b1d997c389e483d",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/gifts-server.test.js",
+      "sha256": "630dcbf895664c900b33812beedf50d2026e9559c47fe8be7e3526dda21858e0",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/hand-display.test.js",
+      "sha256": "90565b1302476d86cd99b4daf4572c7de6822b7e0b3c866f7bfc63d448e96e73",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/hand-result-ui.test.js",
+      "sha256": "1f0f97f84883201b80fb182f029bec3183377f6bbb59f589fe1f820e121e5391",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/i18n-harness.js",
+      "sha256": "31d78d91764fae94c13f28c36f109f9d29439d3a3d62add0e4585cbff305f409",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/i18n.test.js",
+      "sha256": "39da11612b1dabcebf6fddb93ae0a4af3d539431d7bfd9c4dcaffe53186b03cc",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/input-focus.browser.test.js",
+      "sha256": "a4d76c030186227b0a572a38cf0ad612e2850ddc04f2f87a52f2f809f72944b7",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/integration.test.js",
+      "sha256": "26b6f49f77f55c70ebfa4f999b6640b6bfb378b26188bb4f71e4fd122e261cbe",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/late-seat.integration.test.js",
+      "sha256": "501e0a0d44bc55c27a5506c7e90a36a5ec09288a9dea420aa43a82612499e75e",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/loading-ui.test.js",
+      "sha256": "f409865552254ac32546cde246b09ac162506e313dcb821337dd8a1c9db36cfb",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/memory-cleanup.test.js",
+      "sha256": "1fe0114399f5b0a3ce053d765058dbd60b47039a25a1d0b2b73178e34bc8f8b0",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/mobile-actions.test.js",
+      "sha256": "913de0ce5cb54ccd1c473dbf2b88580ac78f2d23628cf186555f16cbadb58abb",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/orphan-side-pot.test.js",
+      "sha256": "182b3663a868f27ad46e0c31df3396a6052015d24c33ad9a9640036a659c2d8c",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/phone-identity-ui.test.js",
+      "sha256": "169fdbd29a060d8535efe9794ae4895019555361b41c5332551824417f7e117f",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/phone-identity.integration.test.js",
+      "sha256": "ed2df260db5d570898408082d215645d5568c16d541d4ced0a4888481aa43b2e",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/phone-identity.test.js",
+      "sha256": "6ca6c322e0a9f8c5a6eb2b962b13205d0d6a1d43ca810f76f96f005fd4fec825",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/phone-rollback-compat.test.js",
+      "sha256": "a0ced5f4dd8b5b4351fb2b2ec34c9aaabddd1b4154281f4734020acf1ff78f67",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/pot-shortcuts.test.js",
+      "sha256": "40ee064922140370fcbe3288863b0999e1899541eac19decedd3190c180e85d6",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/preaction-server.test.js",
+      "sha256": "29e9feab6aaccb2ed1cedaebb48fe4351e13b8bba63882d33b4ba7c00fee248a",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/preactions-app.test.js",
+      "sha256": "78f2d34f9db960d1093eb68a2687e08ff6a341867a1a5a3c3d281a735836ed51",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/preactions.test.js",
+      "sha256": "da3aed38a177d99ecd377434504052fb46a7806aae7bce1f4e71914d1dfabf17",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/precall.test.js",
+      "sha256": "b9602c1b265653573c12b5129e58e56b581553f4ba0e58a5a4bf4c200c684425",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/public-assets.integration.test.js",
+      "sha256": "a7932aa62149431a46f0be468384418e2a1192d415bd162a6d500514b0cf22ba",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/public-assets.test.js",
+      "sha256": "c2756d53d57b042e2ccb034ff821b19d32a4ad26f6e613fe1965c906fde4b431",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/realtime.test.js",
+      "sha256": "ed502650a605f71549ca9d3291b5d53725f5aca9b6f0e045d84c639e3415bf58",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/reveal-delay.integration.test.js",
+      "sha256": "5691c67b09372182830c133038cf65774c04a80e6b108f69466fad7afc228f82",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/reveal-delay.test.js",
+      "sha256": "9f90d54504791e15beac9cc45a3046aa670a10bfbb8066629622ec1cabe28775",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/room-expiry.test.js",
+      "sha256": "6977cca957de5ebf1068f6c4263c5230f63f57dd00d07de676fe8ab3914cc50f",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/runout-ui.test.js",
+      "sha256": "d967e9ff3dfaaf081b09ae98cf6f4847c964a34efcdf005c15d0f16fdd2d1b8a",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/runout.integration.test.js",
+      "sha256": "c5b1291eef3d4e0ddb8503abb99de19dfbd0bc9dcc863c8ea0b2c140a8c14aec",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/runout.test.js",
+      "sha256": "e7197a570a7f8975700dd031d4f1a1e6ccf0a4f453bd469f4ffe23a0ce047d26",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/sound-app.test.js",
+      "sha256": "1f7c6ce1a7536842ecc06824c29893c31e2eb7752e344363ffc18c431f3146ce",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/sound-events.test.js",
+      "sha256": "a13e58c1e9dda7b6b1e77f0030cb87e0ae8f46a9aea91f61ffd09a019d415e4d",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/sound-real-room.test.js",
+      "sha256": "66783dac26dc0440ba0d82a1d71c88dc154ee7530a99d347c0a14c50d21347b3",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/sounds.test.js",
+      "sha256": "312487b21382323babe914d6aa395c0fedcd249582237541d4a31014097211c2",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/state-snapshots.test.js",
+      "sha256": "3218e6a6fcdc2baaac7a87b685e2c2b241ff54ebe1e40da4b6d5ac03f999eff5",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/street-commit.test.js",
+      "sha256": "f997fa8f1a3d5c15509b1f3f2d96bd1d672f6c5bd8490b8a30ffd188d225276d",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/timebank.integration.test.js",
+      "sha256": "87fcf05783c6624760f991ed85b0a719803faf79a1529d7b316cdabd64513aa9",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/timebank.test.js",
+      "sha256": "ec1249d8e4f62572554ef46954da0359ed9d491e042ceb8707382c52ac271d00",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/timing.test.js",
+      "sha256": "59b001213fa54d528fb51d551655a5ed9b80dc6111a450a2d0fcec18f2584ea8",
+      "gitmode": "100644"
+    },
+    {
+      "path": "test/ui-feedback.test.js",
+      "sha256": "ea37f7237b64de290eb76ff4913c89186a4fbbcc1bbecca36eec68573a4e9955",
+      "gitmode": "100644"
+    }
+  ]
+}
